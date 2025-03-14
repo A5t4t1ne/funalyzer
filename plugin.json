@@ -22,9 +22,9 @@
         "Windows"
     ],
     "installinstructions": {
-        "Darwin": "Install the following pip packages: unblob",
-        "Linux": "Install the following pip packages: unblob",
-        "Windows": "Install the following pip packages: unblob"
+        "Darwin": "",
+        "Linux": "",
+        "Windows": ""
     },
     "dependencies": {
         "pip": [
