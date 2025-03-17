@@ -1,0 +1,48 @@
+[tool.setuptools]
+packages = ["funalyzer"]
+
+[project]
+name = "funalyzer"
+version = "0.0.1"
+description = "A Binary Ninja plugin for known function detection"
+readme = "README.md"
+authors = [
+    {name = "A5t4t1ne"},
+]
+license = {file = "LICENSE"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache2 License",
+    "Operating System :: OS Independent",
+]
+keywords = ["Binary", "Ninja", "plugin", "LibMatch", "python"]
+dependencies = []
+requires-python = ">=3.12"
+
+[project.optional-dependencies]
+develop = [
+    "ruff==0.9.9",
+	"pyright==1.1.396"
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+exclude = [
+    ".git",
+    ".venv",
+    "build",
+    "dist",
+    "__pycache__",
+]
+
+[tool.ruff.lint]
+fixable = ["ALL"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[project.urls]
+Repository = "https://github.com/A5t4t1ne/funalyzer"
+
