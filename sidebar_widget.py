@@ -1,10 +1,11 @@
 from binaryninja import log_error, log_info
 from binaryninja.binaryview import BinaryView
-from binaryninja.flowgraph import CoreFlowGraph
-from binaryninjaui import SidebarWidget, UIActionHandler, SidebarWidgetLocation, SidebarContextSensitivity, SidebarWidgetType
+from binaryninjaui import SidebarWidget, UIActionHandler, SidebarWidgetLocation, SidebarContextSensitivity, \
+        SidebarWidgetType
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QImage, QPainter, QFont, QColor
 from PySide6.QtWidgets import QCheckBox, QLabel, QPushButton, QVBoxLayout
+from pathlib import Path
 import subprocess
 
 
@@ -25,7 +26,7 @@ class FunalyzerSidebarWidget(SidebarWidget):
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
 
-        self.options = [QCheckBox("LibMatch"), QCheckBox("LLM"), QCheckBox("Oth")]
+        self.options = [QCheckBox("LibMatch"), QCheckBox("LLM"), QCheckBox("Other")]
         self.execute_button = QPushButton("Analyze")
         self.execute_button.clicked.connect(self.on_button_click)
 
@@ -38,47 +39,14 @@ class FunalyzerSidebarWidget(SidebarWidget):
         self.setLayout(layout)
 
     def on_button_click(self):
-        log_info("Button clicked")
-        # view_frame = UIContext.activeContext().getCurrentViewFrame()
+        log_info("Analyzing...")
         if self.view_frame:
             bv = self.view_frame.getCurrentBinaryView()
             if isinstance(bv, BinaryView):
-                a = "./utils/unblob -U --scoring -L \
-                        ./objects/arm-none-eabi.lmdb \
-                        -Y ./bins/Nucleo_i2c_master.elf \
-                        ./bins/Nucleo_i2c_master_addrs.yml`"
-
-                try:
-                    # Run unblob command
-                    cmd = [*a.split()]
-                    process = subprocess.run(
-                        cmd,
-                        capture_output=True,  # Capture stdout and stderr
-                        text=True,            # Return strings instead of bytes
-                        check=True            # Raise exception on error
-                    )
-
-                    log_info(f"Command output:\n{process.stdout}")
-                except subprocess.CalledProcessError as e:
-                    log_error(f"Command failed with error: {e.stderr}")
-                except Exception as e:
-                    log_error(f"Error running command: {str(e)}")
-                else:
-                    log_error("No binary view, was the binary file analyzed?")
-
-                for func in bv.functions:
-                    log_info(f"Function: {func.name}")
-
-                    # Generate CFG for the function
-                    cfg = func.create_graph()
-
-                    # Export CFG as a dot file or visualize it
-                    dot_file_path = f"{func.name}_cfg.dot"
-                    with open(dot_file_path, "w") as dot_file:
-                        dot_file.write(cfg.serialize_to_dot())
-
-                    log_info(f"CFG for {func.name} exported to {dot_file_path}")
-
+                log_info("unrecognized functions:")
+                for func in list(bv.functions)[:10]:
+                    if func.name.startswith("sub_"):
+                        log_info(f"Function: {func.name}")
         else:
             log_error("No view frame, did you open a binary file?")
 
