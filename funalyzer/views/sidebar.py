@@ -1,12 +1,15 @@
 from binaryninja import log_error, log_info
 from binaryninja.binaryview import BinaryView
-from binaryninjaui import SidebarWidget, UIActionHandler, SidebarWidgetLocation, SidebarContextSensitivity, \
-        SidebarWidgetType
+from binaryninjaui import (
+    SidebarWidget,
+    UIActionHandler,
+    SidebarWidgetLocation,
+    SidebarContextSensitivity,
+    SidebarWidgetType,
+)
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QImage, QPainter, QFont, QColor
 from PySide6.QtWidgets import QCheckBox, QLabel, QPushButton, QVBoxLayout
-from pathlib import Path
-import subprocess
 
 
 # Sidebar widgets must derive from SidebarWidget, not QWidget. SidebarWidget is
