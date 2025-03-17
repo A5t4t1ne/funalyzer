@@ -1,7 +1,7 @@
-unblob
 .venv
 PySide6
 *.lmdb
 bins
 binaryninja/
 binaryninjaui/
+unblob
