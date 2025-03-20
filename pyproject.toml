@@ -21,9 +21,15 @@ requires-python = ">=3.12"
 
 [project.optional-dependencies]
 develop = [
-    "ruff==0.9.9",
+    "ruff==0.11.0",
 	"pyright==1.1.396"
 ]
+
+[project.urls]
+Repository = "https://github.com/A5t4t1ne/funalyzer"
+
+[tool.pyright]
+exclude = ["**/__pycache__", "**/.venv", "**/.git", "./test/"]
 
 [tool.ruff]
 line-length = 88
@@ -43,6 +49,4 @@ fixable = ["ALL"]
 quote-style = "double"
 indent-style = "space"
 
-[project.urls]
-Repository = "https://github.com/A5t4t1ne/funalyzer"
 
