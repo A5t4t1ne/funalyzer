@@ -30,8 +30,9 @@ class FunalyzerSidebarWidget(SidebarWidget):
         layout.addWidget(title)
 
         self.options = [QCheckBox("LibMatch"), QCheckBox("LLM"), QCheckBox("Other")]
+        self.train_model = QPushButton("Train")
         self.execute_button = QPushButton("Analyze")
-        self.execute_button.clicked.connect(self.on_button_click)
+        self.execute_button.clicked.connect(self.on_analyze_button_click)
 
         for option in self.options:
             layout.addWidget(option)
@@ -41,7 +42,7 @@ class FunalyzerSidebarWidget(SidebarWidget):
 
         self.setLayout(layout)
 
-    def on_button_click(self):
+    def on_analyze_button_click(self):
         log_info("Analyzing...")
         if self.view_frame:
             bv = self.view_frame.getCurrentBinaryView()
