@@ -16,8 +16,11 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 keywords = ["Binary", "Ninja", "plugin", "LibMatch", "python"]
-dependencies = []
+dependencies = [
+	"networkx >= 3.4.2"
+]
 requires-python = ">=3.12"
+
 
 [project.optional-dependencies]
 develop = [
@@ -32,7 +35,7 @@ Repository = "https://github.com/A5t4t1ne/funalyzer"
 exclude = ["**/__pycache__", "**/.venv", "**/.git", "./test/"]
 
 [tool.ruff]
-line-length = 88
+line-length = 120
 target-version = "py312"
 exclude = [
     ".git",

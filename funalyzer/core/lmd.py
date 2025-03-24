@@ -1,12 +1,212 @@
+import binaryninja as bn
+from binaryninja import SymbolType
+from binaryninja import LowLevelILOperation, InstructionTextTokenType
 from binaryninja.binaryview import BinaryView
-from binaryninja.function import Function
-from binaryninja.flowgraph import CoreFlowGraph
+from binaryninja.lowlevelil import LowLevelILBasicBlock
 from pathlib import Path
 import shelve
 from shelve import Shelf
 from typing import Dict, Any
+import networkx
+from networkx.reportviews import NodeView
 
 from binaryninja.log import log_error
+
+
+class NormalizedFunction():
+    """A more normalized function class for use in LibMatch
+    """
+    def __init__(self, function: bn.Function):
+        # start by copying the graph
+        self.graph = self._function_to_networkx(function)
+        self.nodes = [node for node in function.low_level_il]
+        self.call_sites: Dict[NodeView, List[int]] = dict()
+        self.startpoint = function.start
+        self.merged_blocks = dict()
+        self.orig_function = function
+        self.addr = function.start
+
+        # find nodes which end in call and combine them
+        done = False
+        while not done:
+            done = True
+            # iterate over all basic blocks in IL for architecture independency
+            for basic_block in function.low_level_il:
+                try:
+                    # Get the last instruction of the block
+                    last_instr = basic_block[-1]
+                except IndexError:
+                    continue
+
+                successors = list(basic_block.outgoing_edges)
+                
+                # Check if the block ends with a call and meets merging criteria
+                if (last_instr.operation == LowLevelILOperation.LLIL_CALL and
+                    len(successors) == 1 and
+                    len(list(basic_block.incoming_edges)) == 1 and
+                    successors[0].target.start > basic_block.start):
+
+                    succ = successors[0]
+                    
+                    # Add edges to the successors of its successor
+                    # TODO high: fix this, not sure about the for block
+                    for edge in succ.target.outgoing_edges:
+                        self.graph.add_edge(basic_block, edge)
+                    
+                    # Remove the original successor
+                    self.graph.remove_node(succ)
+                    done = False
+
+                    # Update merged blocks
+                    if basic_block not in self.merged_blocks:
+                        self.merged_blocks[basic_block] = []
+                    self.merged_blocks[basic_block].append(succ)
+                    if succ in self.merged_blocks:
+                        self.merged_blocks[basic_block].extend(self.merged_blocks[succ])
+                        del self.merged_blocks[succ]
+                    
+                    # Start over
+                    break
+                            
+        # set up call sites
+        # TODO high: fix this
+        # Process call sites for each node in graph
+        for n in self.graph.nodes:
+            call_targets = []
+            merged_block = None
+            
+            # Check if this node is in merged blocks
+            for mb in self.merged_blocks:
+                if n == mb.start:
+                    merged_block = mb
+                    break
+            
+            # Get call targets for current block
+            llil = self.orig_function.get_llil_at(n)
+            if llil and llil.operation == LowLevelILOperation.LLIL_CALL:
+                dest = llil.operands[0]  # Call destination is the first operand
+                if isinstance(dest, int):
+                    call_targets.append(dest)
+
+            # Get call targets from merged blocks
+            if merged_block:
+                for block in self.merged_blocks[merged_block]:
+                    llil = self.orig_function.get_llil_at(block.start)
+                    if llil and llil.operation == LowLevelILOperation.LLIL_CALL:
+                        dest = llil.operands[0]  # Call destination is the first operand
+                        if isinstance(dest, int):
+                            call_targets.append(dest)
+
+            # Handle tail calls (transitions in angr terminology)
+            last_llil = self.orig_function.get_llil_at(n)
+            if (last_llil and 
+                last_llil.operation == LowLevelILOperation.LLIL_JUMP and 
+                isinstance(last_llil.operands[0], int) and  # Jump destination is the first operand
+                not self.orig_function.contains_address(last_llil.operands[0])):
+                call_targets.append(last_llil.operands[0])
+
+            # Store call targets if any found
+            if call_targets:
+                self.call_sites[n] = call_targets
+
+    def _function_to_networkx(self, function: bn.Function) -> networkx.DiGraph:
+        """Convert a Binary Ninja function to a networkx directed graph
+        
+        Args:
+            function: Binary Ninja Function object
+        
+        Returns:
+            networkx.DiGraph representing the function's CFG
+        """
+        # Create empty directed graph
+        graph = networkx.DiGraph()
+        
+        # Get function's flow graph
+        flow_graph = function.create_graph()
+        
+        # Add all basic blocks as nodes
+        for node in flow_graph:
+            graph.add_node(node.basic_block.start, 
+                          block=node.basic_block,
+                          size=node.basic_block.length)
+        
+        # Add edges between blocks
+        for node in flow_graph:
+            for edge in node.outgoing_edges:
+                graph.add_edge(node.basic_block.start, 
+                             edge.target.basic_block.start)
+        
+        return graph
+
+
+class NormalizedBlock():
+    """A class for normalizing basic blocks.
+    """
+    def __init__(self, bv: BinaryView, block: LowLevelILBasicBlock, function: NormalizedFunction):
+        """Constructor
+
+        Args:
+            project (angr (TODO)): replace with binja
+            block (_type_): _description_
+            function (_type_): _description_
+        """
+        # Initialize basic properties
+        self.addr = block.start
+        self.blocks = [block]
+        self.size = block.length
+        
+        # Add merged block addresses if any
+        if block.start in function.merged_blocks:
+            for merged_block in function.merged_blocks[block]:
+                self.blocks.append(merged_block)
+        
+        # Initialize collections
+        self.statements = []
+        self.all_constants = []
+        self.operations = []
+        self.call_targets = []
+        self.blocks = [block]
+        self.instruction_addrs = []
+
+        # Process LLIL for each instruction in block
+        for bb in self.blocks:
+            if bb:
+                for instr in bb:
+                    # Collect instruction addresses
+                    self.instruction_addrs.append(instr.address)
+                    
+                    # Extract constants from instruction tokens
+                    for token in instr.tokens:
+                        if token.type == InstructionTextTokenType.IntegerToken:
+                            self.all_constants.append(token.value)
+                    
+                    # Record operation type
+                    self.operations.append(instr.operation)
+                    
+                    # Store normalized instruction text
+                    self.statements.append(str(instr))
+                    
+                    # Handle calls
+                    if instr.operation == LowLevelILOperation.LLIL_CALL:
+                        dest = instr.dest
+                        if isinstance(dest, int):
+                            # Try to resolve symbol name for direct calls
+                            symbol = bv.get_symbol_at(dest)
+                            target = symbol.name if symbol else hex(dest)
+                            self.call_targets.append((block, target))
+
+        # Get jump type from last instruction
+        last_instr = bb[-1]
+        self.jumpkind = last_instr.operation if last_instr else None
+        
+        # Update size to include merged blocks
+        self.size = sum(b.length for b in self.blocks)
+        
+    def __repr__(self):
+        size = sum([b.size for b in self.blocks])
+        return '<Normalized Block for %#x, %d bytes>' % (self.addr, size)
+
+
 
 
 class LibMatchDescriptor():
@@ -14,38 +214,35 @@ class LibMatchDescriptor():
     A class to precompute all information for a project necessary for LibMatch to run.
     Serializes easily into a (relatively) small blob.
     """
-    def __init__(self, proj, bv: BinaryView, banned_names=("$d", "$t")):
-        self.cfg = proj.analyses.CFGFast(force_complete_scan=False, 
-                resolve_indirect_jumps=True, 
-                normalize=True,
-                cross_references=True,
-                detect_tail_calls=True)
-        self.callgraph = self.cfg.kb.callgraph
-        self._sim_procedures = {addr: (sp.library_name or "_UNKNOWN_LIB") + ":" + sp.display_name
-                                for addr, sp in proj._sim_procedures.items()}
+    def __init__(self, bv: BinaryView, banned_names=("$d", "$t")):
+        bv.update_analysis_and_wait()
+        self.callgraph = self._build_callgraph(bv)
+        self._sim_procedures = dict()
+        for func in bv.functions:
+            if func.symbol.type == SymbolType.ImportedFunctionSymbol:
+                library_name = func.symbol.namespace or "_UNKNOWN_LIB"
+                self._sim_procedures[func.start] = f"{library_name}:{func.symbol.name}"
 
         self.banned_addrs = set()
         self.normalized_functions = dict() # 
         self.normalized_blocks = dict()
         self.ordered_successors = dict() 
-        self.filename: str = proj.filename
+        self.filename: str = bv.file.filename
         self.bv: BinaryView = bv
 
         # Normalize all functions and save in attribute
         for fun in self.bv.functions:
             # TODO high: remove project (and replace with bv?)
             self.normalized_functions[fun.start] = NormalizedFunction(proj, fun)
-
-
-        # TODO priority high: replace with binja API
-        # for faddr in self.cfg.kb.functions:
-        #     f = self.cfg.kb.functions.function(faddr)
-        #     self.normalized_functions[f.addr] = NormalizedFunction(proj, f)
-        #     for b in f.graph.nodes():
-        #         try:
-        #             self.normalized_blocks[(f.addr, b.addr)] = NormalizedBlock(proj, b, self.normalized_functions[f.addr])
-        #         except (SimMemoryError, SimEngineError):
-        #             self.normalized_blocks[(f.addr, b.addr)] = None
+            for node in fun.create_graph().nodes:
+                block = node.basic_block
+                try:
+                    # TODO high: fix project parameter
+                    self.normalized_blocks[(fun.start, block.start)] = NormalizedBlock(self.bv, b, self.normalized_functions[fun.start])
+                except Exception as e:
+                    self.normalized_blocks[(fun.start, block.addr)] = None
+                    log_error(f"Failed to normalize block ({fun.name}, {block}) with {e}")
+                
 
         # for norm_f in self.normalized_functions.values():
         #     for b in norm_f.graph.nodes():
@@ -90,6 +287,20 @@ class LibMatchDescriptor():
                 self.viable_symbols.add(sym)
         proj.loader.close()
         del proj.loader
+    
+    def _build_callgraph(self, bv: BinaryView) -> networkx.DiGraph:
+        """Build callgraph from BinaryNinja function call references"""
+        graph = networkx.DiGraph()
+        
+        # Add all functions as nodes
+        for function in bv.functions:
+            graph.add_node(function.start)
+            
+            # Add edges for all callees
+            for callee in function.callees:
+                graph.add_edge(function.start, callee.start)
+            
+        return graph
 
 
     def is_trivial(self, proj, f):
@@ -178,15 +389,6 @@ class LibMatchDescriptor():
                 return s
 
     # Creation and Serialization
-
-    @staticmethod
-    def make_signature(filename, **project_kwargs):
-        # TODO: replace
-        # proj = angr.Project(filename, **project_kwargs)
-        # lmd = LibMatchDescriptor(proj)
-        # return lmd
-        return LibMatchDescriptor("arts") # dummy
-
     @staticmethod
     def make_signature_dump(filename, **project_kwargs):
         lmd = LibMatchDescriptor.make_signature(filename, **project_kwargs)
@@ -306,101 +508,5 @@ class CleBackendHusk(object):
         return self.sections.find_region_containing(addr)
 
 
-class NormalizedFunction(object):
-    # a more normalized function
-    def __init__(self, project, function: Function):
-        # start by copying the graph
-        self.graph: CoreFlowGraph = function.create_graph()
-        self.call_sites = dict()
-        self.startpoint = function.start
-        self.merged_blocks = dict()
-        self.orig_function = function
-        # self.addr = self.orig_function.addr # redundant?
-
-        # find nodes which end in call and combine them
-        for node in self.graph.nodes:
-            try:
-                bl = node.block
-            except Exception as e:
-                log_error(f"node block retrieval failed: {e}")
-                continue
-
-        #     """
-        #     successors = list(self.graph.successors(node))
-        #     if bl.vex.jumpkind == 'Ijk_Call' and len(successors) == 0:
-        #         # Calling a noreturn.  Try to make an edge around it.
-        #         # Is this in the middle of a function?
-        #         if (bl.addr + bl.size) < (function.addr + function.size):
-        #             newblock = None
-        #             newblock_addr = bl.addr + bl.size
-        #             newblock_size = None
-        #             if newblock_addr not in function.graph.nodes:
-        #                 # Find teh size of the block.
-        #                 for a in sorted(list(function.block_addrs)):
-        #                     if a > newblock_addr:
-        #                         newblock_size = a - newblock_addr
-        #                         break
-
-        #                 try:
-        #                     l.debug("Lifting noreturn tail at %#08x size %d" % (newblock_addr, newblock_size))
-        #                     newblock = project.factory.block(newblock_addr, opt_level=-1, size=newblock_size)
-        #                 except (SimMemoryError, SimEngineError):
-        #                     pass
-        #                 if newblock:
-        #                     newnode = newblock.codenode
-        #                     self.graph.add_node(newnode)
-        #                     self.graph.add_edge(node, newnode)
-        #     
-        #     """
-        #     successors = list(self.graph.successors(node))
-        #     # merge if it ends with a single call, and the successor has only one predecessor and succ is after
-        #     if bl.vex.jumpkind == "Ijk_Call" and len(successors) == 1 and \
-        #             len(list(self.graph.predecessors(successors[0]))) == 1 and successors[0].addr > node.addr:
-        #         # add edges to the successors of its successor, and delete the original successors
-        #         succ = list(self.graph.successors(node))[0]
-        #         for s in self.graph.successors(succ):
-        #             self.graph.add_edge(node, s)
-        #         self.graph.remove_node(succ)
-        #         done = False
-
-        #         # add to merged blocks
-        #         if node not in self.merged_blocks:
-        #             self.merged_blocks[node] = []
-        #         self.merged_blocks[node].append(succ)
-        #         if succ in self.merged_blocks:
-        #             self.merged_blocks[node] += self.merged_blocks[succ]
-        #             del self.merged_blocks[succ]
-        #         # stop iterating and start over
-        #         break
-
-        # set up call sites
-        for n in self.graph.nodes():
-            call_targets = []
-            merged_block = None
-            for mb in self.merged_blocks:
-                if n.addr == mb.addr:
-                    merged_block = mb
-                    break
-
-            if n.addr in self.orig_function.get_call_sites():
-                call_targets.append(self.orig_function.get_call_target(n.addr))
-            if merged_block:
-                for block in self.merged_blocks[merged_block]:
-                    if block.addr in self.orig_function.get_call_sites():
-                        call_targets.append(self.orig_function.get_call_target(block.addr))
-            if self.orig_function.endpoints_with_type['transition']:
-                for tt in self.orig_function.endpoints_with_type['transition']:
-                    if tt.addr == n.addr:
-                        call_targets.append(tt.successors()[0].addr)
-            if len(call_targets) > 0:
-                self.call_sites[n] = call_targets
-
-    def __getattr__(self, a):
-        if a == "__getstate__" or a == "__setstate__": # to ensure correct pickling
-            raise AttributeError
-        if "orig_function" in self.__dict__:
-            return getattr(self.orig_function, a)
-        else:
-            raise AttributeError(a)
 
 

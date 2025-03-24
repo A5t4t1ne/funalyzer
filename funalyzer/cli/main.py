@@ -16,18 +16,14 @@ def main() -> None:
     based on the objects files of these libraries. The plugin can be run both in 
     Binary Ninja and in headless mode.
     """
-    parser = ap.ArgumentParser(
-        description=description, formatter_class=ap.ArgumentDefaultsHelpFormatter
-    )
+    parser = ap.ArgumentParser(description=description, formatter_class=ap.ArgumentDefaultsHelpFormatter)
 
     parser.add_argument("infile")
     parser.add_argument("outfile")
     parser.add_argument("--debug", action="store_true")
 
     modes = parser.add_mutually_exclusive_group()
-    modes.add_argument(
-        "-U", dest="mode_normal", action="store_true", help="Unblobulate!"
-    )
+    modes.add_argument("-U", dest="mode_normal", action="store_true", help="Unblobulate!")
     modes.add_argument("-X", dest="mode_extract", action="store_true", help="Extract")
     modes.add_argument(
         "-B",
@@ -42,13 +38,9 @@ def main() -> None:
         type=int,
         help="Manually specify the base address of the binary",
     )
-    input_opts.add_argument(
-        "--entry-point", type=int, help="Manually specify the entry point of the binary"
-    )
+    input_opts.add_argument("--entry-point", type=int, help="Manually specify the entry point of the binary")
     input_opts.add_argument("--arch", help="Manually specify the architecture to use")
-    input_opts.add_argument(
-        "--cortex", help="Fast Cortex-M loading mode", action="store_true"
-    )
+    input_opts.add_argument("--cortex", help="Fast Cortex-M loading mode", action="store_true")
 
     symbol_opts = parser.add_argument_group("Symbol Recovery Options")
     symbol_opts.add_argument(
@@ -62,9 +54,7 @@ def main() -> None:
         "--fudge-factor",
         help="Lowest similarity score to consider a 'match' for symbol recovery",
     )
-    symbol_opts.add_argument(
-        "-L", "--lmdb", help="LMDB file to use for symbol recovery"
-    )
+    symbol_opts.add_argument("-L", "--lmdb", help="LMDB file to use for symbol recovery")
     symbol_opts.add_argument(
         "-1",
         "--first-order",
@@ -90,12 +80,8 @@ def main() -> None:
     )
 
     output_opts = parser.add_argument_group("Output Options")
-    output_opts.add_argument(
-        "-E", "--elf", help="Produce an ELF (Default)", action="store_true"
-    )
-    output_opts.add_argument(
-        "-Y", "--yaml", help="Produce a YAML file", action="store_true"
-    )
+    output_opts.add_argument("-E", "--elf", help="Produce an ELF (Default)", action="store_true")
+    output_opts.add_argument("-Y", "--yaml", help="Produce a YAML file", action="store_true")
 
     args = parser.parse_args()
     print(args)

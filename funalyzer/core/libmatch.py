@@ -1,14 +1,15 @@
 import logging
+from .LibMatchDatabase import LibMatchDatabase, LibMatchDescriptor
 from .iocg import InterObjectCallgraph
 from .lmd import LibMatchDescriptor
 from .functiondiff import FunctionDiff
 from collections import defaultdict
+from binaryninja import log_info, lob_debug, log_warning
+from typing import List, Dict
 
-l = logging.getLogger("bdsig.libmatch")
-l.setLevel("DEBUG")
 
 class LibMatch(object):
-    def __init__(self, binary_lmd, lmdb):
+    def __init__(self, binary_lmd: LibMatchDescriptor, lmdb: LibMatchDatabase):
         """
         :param binary_lmd: The LibMatchDescriptor of the target binary
         :param lib_lmds: An iterable of LibMatchDescriptors corresponding to libraries
@@ -42,11 +43,13 @@ class LibMatch(object):
                 # match the lib func against the binary if the first order heuristic passes
                 attrs = lmd.function_attributes[faddr]
                 results = set()
-                #results = {bin_faddr for bin_faddr, bin_attrs in self.binary_lmd.function_attributes.items()
+                # results = {bin_faddr for bin_faddr, bin_attrs in self.binary_lmd.function_attributes.items()
                 #           if self._first_order_heuristic(attrs, bin_attrs)}
                 for bin_faddr, bin_attrs in self.binary_lmd.function_attributes.items():
-                    if faddr == 0x4002bd and bin_faddr == 0x00003D45:
-                        import ipdb; ipdb.set_trace()
+                    if faddr == 0x4002BD and bin_faddr == 0x00003D45:
+                        import ipdb
+
+                        ipdb.set_trace()
                     if self._first_order_heuristic(attrs, bin_attrs):
                         results.add(bin_faddr)
                 self._first_order_matches[lib_name][lmd][faddr] = results
@@ -73,17 +76,18 @@ class LibMatch(object):
                 self._second_order_matches[lib_name][lmd][faddr] = []
                 for maddr in func_matches:
                     fd = self._second_order_heuristic(self.binary_lmd, lmd, maddr, faddr)
-                    if fd.function_a.name == "tcp_recved" and fd.function_b.name == 'tcp_recved':
-                        import ipdb;
+                    if fd.function_a.name == "tcp_recved" and fd.function_b.name == "tcp_recved":
+                        import ipdb
+
                         ipdb.set_trace()
                     if fd.probably_identical:
                         self._second_order_matches[lib_name][lmd][faddr].append((maddr, fd))
 
-    def _postprocess_second_order_matches(self):
-
+    def _postprocess_second_order_matches(self) -> Dict[int, List]:
+        # TODO low: better description / comment
         # Gather the matches based on the functions in the original binary:
-        matches = defaultdict(list)
-        #for lib_res in self._second_order_matches:
+        matches = defaultdict(list)  # TODO medium: replace defaultdict with something more concise
+        # for lib_res in self._second_order_matches:
         for lib_name, lib_matches in self._second_order_matches.items():
             for obj_lmd, obj_res in lib_matches.items():
                 for obj_func_addr, obj_func_matches in obj_res.items():
@@ -116,7 +120,12 @@ class LibMatch(object):
         good_hits = []
         for f_addr, matches in self._candidate_matches.items():
             if len(matches) == 1:
-                good_hits.append((f_addr, matches,))
+                good_hits.append(
+                    (
+                        f_addr,
+                        matches,
+                    )
+                )
         for f_addr, matches in good_hits:
             self._narrow_fourth_order(f_addr, matches)
 
@@ -153,7 +162,7 @@ class LibMatch(object):
         # Maybe we should check everything, even if it has more than one match.
         # No match is better than one wrong one!
         if f_addr in self.recursion_list:
-            l.warning("Oof, recursion to %#08x!" % f_addr)
+            log_warning("Oof, recursion to %#08x!" % f_addr)
             return
         self.recursion_list.append(f_addr)
         if len(matches) == 1:
@@ -169,10 +178,24 @@ class LibMatch(object):
                 if not self.binary_lmd.loader.main_object.contains_addr(callee):
                     # A jumpout! Fuck.
                     callee_name = "UnresolvableCallTarget"
-                    target_callees.append({(callee, callee_name,)})
+                    target_callees.append(
+                        {
+                            (
+                                callee,
+                                callee_name,
+                            )
+                        }
+                    )
                 elif callee in self.binary_lmd.banned_addrs:
                     callee_name = "Ignored"
-                    target_callees.append({(callee, callee_name,)})
+                    target_callees.append(
+                        {
+                            (
+                                callee,
+                                callee_name,
+                            )
+                        }
+                    )
                 elif callee not in self._candidate_matches or len(self._candidate_matches[callee]) == 0:
                     l.error("Cannot disambiguate function at %#08x, unmatched call to %#08x" % (f_addr, callee))
                     self.ambiguous_funcs.append(f_addr)
@@ -193,14 +216,19 @@ class LibMatch(object):
                             self.ambiguous_funcs.append(f_addr)
                             self.recursion_list.remove(f_addr)
                             return
-                    possible_callees = set  ()
+                    possible_callees = set()
                     for cm in callee_matches:
                         m_lib, m_lmd, m_fd = cm
                         callee_sym = m_lmd.symbol_for_addr(m_fd.function_b.addr)
                         if not callee_sym:
                             continue
                         callee_name = callee_sym.name
-                        possible_callees.add((callee, callee_name,))
+                        possible_callees.add(
+                            (
+                                callee,
+                                callee_name,
+                            )
+                        )
                     target_callees.append(possible_callees)
         if not target_callees:
             l.error("No calls in function %#08x, cannot disambiguate" % f_addr)
@@ -272,8 +300,10 @@ class LibMatch(object):
             return
         target_func = m_fd.function_a
         lib_func = m_fd.function_b
-        for (targ_block, targ_callees), (lib_block, lib_callees) in zip(target_func.call_sites.items(), lib_func.call_sites.items()):
-           for targ_callee, lib_callee in zip(targ_callees, lib_callees):
+        for (targ_block, targ_callees), (lib_block, lib_callees) in zip(
+            target_func.call_sites.items(), lib_func.call_sites.items()
+        ):
+            for targ_callee, lib_callee in zip(targ_callees, lib_callees):
                 if not self.binary_lmd.loader.main_object.contains_addr(targ_callee):
                     # A jumpout! Fuck.
                     continue
@@ -286,16 +316,29 @@ class LibMatch(object):
                     # library and make that the name to match.
                     guessed_sym = m_lmd.symbol_for_addr(lib_callee)
                     if guessed_sym is None:
-                        l.info("No findable name for call to %#08x from %#08x(%s)"% (targ_callee, target_func.addr, lib_func.name))
+                        l.info(
+                            "No findable name for call to %#08x from %#08x(%s)"
+                            % (targ_callee, target_func.addr, lib_func.name)
+                        )
                     else:
                         guessed_name = guessed_sym.name
-                        l.info("Guessing name of %#08x is %s due to call from %#08x(%s)" % (targ_callee, guessed_name, target_func.addr, lib_func.name))
+                        l.info(
+                            "Guessing name of %#08x is %s due to call from %#08x(%s)"
+                            % (
+                                targ_callee,
+                                guessed_name,
+                                target_func.addr,
+                                lib_func.name,
+                            )
+                        )
                         self._candidate_matches[targ_callee] = [(m_lib, m_lmd, guessed_name)]
                 elif len(self._candidate_matches[targ_callee]) == 1:
                     guessed_sym = m_lmd.symbol_for_addr(lib_callee)
                     if guessed_sym is None:
-                        l.info("No findable name for call to %#08x from %#08x(%s)" % (
-                        targ_callee, target_func.addr, lib_func.name))
+                        l.info(
+                            "No findable name for call to %#08x from %#08x(%s)"
+                            % (targ_callee, target_func.addr, lib_func.name)
+                        )
                     else:
                         guessed_name = guessed_sym.name
                         lol, blah, fd = self._candidate_matches[targ_callee][0]
@@ -305,8 +348,15 @@ class LibMatch(object):
                         else:
                             if fd.function_b.name == guessed_name:
                                 continue
-                        l.info("Guessing name of %#08x is %s due to call from %#08x(%s)" % (
-                        targ_callee, guessed_name, target_func.addr, lib_func.name))
+                        l.info(
+                            "Guessing name of %#08x is %s due to call from %#08x(%s)"
+                            % (
+                                targ_callee,
+                                guessed_name,
+                                target_func.addr,
+                                lib_func.name,
+                            )
+                        )
                         self._candidate_matches[targ_callee] = [(m_lib, m_lmd, guessed_name)]
                     # Nothing to do
                     continue
@@ -315,27 +365,52 @@ class LibMatch(object):
                     # name based on the lib's symbols
                     guessed_sym = m_lmd.symbol_for_addr(lib_callee)
                     if not guessed_sym:
-                        l.warning("Couldn't figure out what %#08x is, called by func %#08x" % (lib_callee, lib_func.addr))
+                        l.warning(
+                            "Couldn't figure out what %#08x is, called by func %#08x" % (lib_callee, lib_func.addr)
+                        )
                         continue
                     guessed_name = guessed_sym.name
                     new_matches = []
                     for match in self._candidate_matches[targ_callee]:
                         c_lib, c_lmd, c_fd = match
                         if c_fd.function_b.name == guessed_name:
-                            l.info("Resolving %#08x to %s via call from %#08x(%s)" % (targ_callee, guessed_name, target_func.addr, lib_func.name))
-                            new_matches.append((c_lib, c_lmd, c_fd,))
+                            l.info(
+                                "Resolving %#08x to %s via call from %#08x(%s)"
+                                % (
+                                    targ_callee,
+                                    guessed_name,
+                                    target_func.addr,
+                                    lib_func.name,
+                                )
+                            )
+                            new_matches.append(
+                                (
+                                    c_lib,
+                                    c_lmd,
+                                    c_fd,
+                                )
+                            )
                     self._candidate_matches[targ_callee] = new_matches
                     if not new_matches:
                         # Welp, it really wasn't the other ones.
                         # Try something new instead
                         guessed_sym = m_lmd.symbol_for_addr(lib_callee)
                         if guessed_sym is None:
-                            l.info("No findable name for call to %#08x from %#08x(%s)" % (
-                                targ_callee, target_func.addr, lib_func.name))
+                            l.info(
+                                "No findable name for call to %#08x from %#08x(%s)"
+                                % (targ_callee, target_func.addr, lib_func.name)
+                            )
                         else:
                             guessed_name = guessed_sym.name
-                            l.info("Guessing name of %#08x is %s due to call from %#08x(%s)" % (
-                                    targ_callee, guessed_name, target_func.addr, lib_func.name))
+                            l.info(
+                                "Guessing name of %#08x is %s due to call from %#08x(%s)"
+                                % (
+                                    targ_callee,
+                                    guessed_name,
+                                    target_func.addr,
+                                    lib_func.name,
+                                )
+                            )
                             self._candidate_matches[targ_callee] = [(m_lib, m_lmd, guessed_name)]
                     self.squish(targ_callee)
                     if len(self._candidate_matches[targ_callee]) == 1:
@@ -353,6 +428,7 @@ class LibMatch(object):
         :return:
         """
         import copy
+
         good_hits = []
         for f_addr, matches in self._candidate_matches.items():
             if len(matches) == 1:
