@@ -10,6 +10,7 @@ from binaryninjaui import (
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QImage, QPainter, QFont, QColor
 from PySide6.QtWidgets import QCheckBox, QLabel, QPushButton, QVBoxLayout
+from ..libmatch.lmdb import LibMatchDatabase
 
 
 # Sidebar widgets must derive from SidebarWidget, not QWidget. SidebarWidget is
@@ -30,24 +31,37 @@ class FunalyzerSidebarWidget(SidebarWidget):
         layout.addWidget(title)
 
         self.options = [QCheckBox("LibMatch"), QCheckBox("LLM"), QCheckBox("Other")]
-        self.train_model = QPushButton("Train")
-        self.execute_button = QPushButton("Analyze")
-        self.execute_button.clicked.connect(self.on_analyze_button_click)
+
+        self.btn_train_model = QPushButton("Train")
+        self.btn_train_model.clicked.connect(self.on_btn_train_click)
+
+        self.btn_analyse = QPushButton("Analyze")
+        self.btn_analyse.clicked.connect(self.on_btn_analyse_click)
 
         for option in self.options:
             layout.addWidget(option)
 
-        layout.addWidget(self.execute_button)
+        layout.addWidget(self.btn_train_model)
+        layout.addWidget(self.btn_analyse)
         layout.addStretch()
 
         self.setLayout(layout)
 
-    def on_analyze_button_click(self):
-        log_info("Analyzing...")
+    def on_btn_train_click(self):
+        log_info("Well, your CPU cores are mine now, because I need them to make a DB :)")
+        if self.view_frame:
+            bv = self.view_frame.getCurrentBinaryView()
+            LibMatchDatabase.build(bv, "/home/dave/hslu/SEM6/BAA/libmatch/objects/arm-none-eabi", "dinimam.lmdb")
+        else:
+            log_error("No view frame, did you open a binary file?")
+
+
+    def on_btn_analyse_click(self):
+        log_info("Analysing...")
         if self.view_frame:
             bv = self.view_frame.getCurrentBinaryView()
             if isinstance(bv, BinaryView):
-                log_info("unrecognized functions:")
+                log_info("unknown functions:")
                 for func in list(bv.functions)[:10]:
                     if func.name.startswith("sub_"):
                         log_info(f"Function: {func.name}")

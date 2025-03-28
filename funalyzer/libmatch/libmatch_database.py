@@ -1,10 +1,13 @@
 from collections import defaultdict
+from typing import Dict, List
 from .lmd import LibMatchDescriptor
-from .utils import score_matches, PROJECT_KWARGS
-from .libmatch import LibMatch
 from binaryninja import log_info, log_warn, log_error, log_debug
+from binaryninja.binaryview import BinaryView
+from pathlib import Path
+import shelve
+from shelve import Shelf
 
-
+PROJECT_KWARGS = []
 
 class LibMatchDatabase(object):
     """
@@ -16,7 +19,7 @@ class LibMatchDatabase(object):
     Under that, they can contain any arbitrary folder structure (e.g., you can just pile a bunch of library folders in there and it'll get figured out)
     """
 
-    def __init__(self, lib_lmds: dict) -> None:
+    def __init__(self, bv: BinaryView, lib_lmds: dict) -> None:
         self.lib_lmds = lib_lmds
         self.lmds = dict()
         self._build_sym_list(lib_lmds)
@@ -71,58 +74,66 @@ class LibMatchDatabase(object):
         log_warn(f"Matched {len(list(final_matches.keys()))} symbols")
         return final_matches
 
-    def match(self, lmd_path: str, score=False):
-        """
-        Scan the database and try to match all libraries with the target.
+    # def match(self, lmd_path: str, score=False):
+    #     """
+    #     Scan the database and try to match all libraries with the target.
 
-        :param lib: Either a string (program path) or a LibMatchDescriptor
-        :return: A dictionary of addresses in the program to possible symbols.
-        """
-        lmd = LibMatchDescriptor.load_path(lmd_path)
-        candidates = []
-        try:
-            self.lm = LibMatch(lmd, self)
-            candidates = self.lm._candidate_matches
-            plain_candidates = self.lm._plain_matches
-        except Exception as e:
-            log_error(f"Error computing matches: {e}")
+    #     :param lib: Either a string (program path) or a LibMatchDescriptor
+    #     :return: A dictionary of addresses in the program to possible symbols.
+    #     """
+    #     lmd = LibMatchDescriptor.load_path(lmd_path)
+    #     candidates = []
+    #     try:
+    #         self.lm = LibMatch(lmd, self)
+    #         candidates = self.lm._candidate_matches
+    #         plain_candidates = self.lm._plain_matches
+    #     except Exception as e:
+    #         log_error(f"Error computing matches: {e}")
 
 
-        # TODO: This is where we put multi-library heuristics!
-        candidates = self._smoosh(candidates)
-        plain_candidates = self._smoosh(plain_candidates)
-        if score:
-            print("############### UNREFINED MATCHES ###############")
-            score_matches(lmd_path, plain_candidates, self)
-            input()
-            print("############### FINAL MATCHES ###############")
-            score_matches(lmd_path, candidates, self)
+    #     # TODO: This is where we put multi-library heuristics!
+    #     candidates = self._smoosh(candidates)
+    #     plain_candidates = self._smoosh(plain_candidates)
+    #     if score:
+    #         print("############### UNREFINED MATCHES ###############")
+    #         score_matches(lmd_path, plain_candidates, self)
+    #         input()
+    #         print("############### FINAL MATCHES ###############")
+    #         score_matches(lmd_path, candidates, self)
 
-        out = self._postprocess_matches(lmd, candidates)
-        return out
+    #     out = self._postprocess_matches(lmd, candidates)
+    #     return out
 
     # Creation and Serialization
     @staticmethod
-    def _build_lib(lib_dir: Path) -> set:
+    def _build_lib(bv: BinaryView, lib_dir: Path) -> set:
+        """recursively build a set of LibMatchDescriptors from a directory of object files.
+
+        Args:
+            lib_dir (str): The directory to build the LMDs from.
+
+        Returns:
+            set: A set of LibMatchDescriptors.
+        """
         lmds = set()
         # TODO prio high: replace angr
+        if not lib_dir.is_dir():
+            log_error(f"{lib_dir} is not a directory")
         for dir_name, _, file_list in lib_dir.walk():
              log_debug(f"Found directory: {dir_name}")
              for file in file_list:
                  file = Path(file)
-                 if file.suffix() == ".o" or file.suffix() == ".obj":
+                 if file.suffix == ".o" or file.suffix == ".obj":
                      fullname = dir_name / file
                      log_debug(f"Making signature for {fullname}")
                      try:
-                         lmds.add(LibMatchDescriptor.make_signature(fullfile, **PROJECT_KWARGS))
-                     except angr.errors.AngrCFGError:
-                         log_warn(f"No executable data for {fullfile}, skipping")
+                         lmds.add(LibMatchDescriptor(bv, fullname))
                      except Exception as e:
-                         log_error("Could not make signature for {fullfile}")
+                         log_error(f"Could not make signature for {fullname}\n{e}")
         return lmds
 
     @staticmethod
-    def build(target: str, dbfile: str | None = None):
+    def build(bv: BinaryView, target: str, dbfile: str | None = None):
         """Build a LibMatchDatabase from a directory of libraries.
 
         Args:
@@ -146,7 +157,7 @@ class LibMatchDatabase(object):
             fullname = root_dir / obj
             if fullname.is_dir():
                 log_info(f"Building signatures for library {obj} {fullname}")
-                lmds[str(obj)] = LibMatchDatabase._build_lib(fullname)
+                lmds[str(obj)] = LibMatchDatabase._build_lib(bv, fullname)
 
         log_info("Making LMDB")
         lmdb = LibMatchDatabase(lmds)

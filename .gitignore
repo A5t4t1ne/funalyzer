@@ -4,4 +4,4 @@ PySide6
 bins
 binaryninja/
 binaryninjaui/
-unblob
+**__pycache__

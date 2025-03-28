@@ -1,10 +1,6 @@
-import networkx
-import logging
+from binaryninja import log_warn, log_debug
 import pickle
 
-
-l = logging.getLogger("bdsig.iocg")
-l.setLevel("DEBUG")
 
 class NameCollisionException(Exception):
     pass
@@ -15,6 +11,7 @@ class InterObjectCallgraph(object):
     A class to handle the creation of a callgraph between all libs.
     The callgraph is implemented as a networkx.DiGraph.
     """
+
     def __init__(self, lib_lmds):
         self.lib_lmds = lib_lmds
         self.callgraph = None
@@ -34,9 +31,11 @@ class InterObjectCallgraph(object):
         # first, add all named_funcs and check for collisions in naming
         for lib in self.lib_lmds:
             for sym in lib.viable_symbols:
-                if not sym.rebased_addr in lib.normalized_functions:
-                    l.warn("Symbol '%s' at %#x not in normalized_functions for lib %s; skipping symbol."
-                           % (sym.name, sym.rebased_addr, lib.filename))
+                if sym.rebased_addr not in lib.normalized_functions:
+                    log_warn(
+                        "Symbol '%s' at %#x not in normalized_functions for lib %s; skipping symbol."
+                        % (sym.name, sym.rebased_addr, lib.filename)
+                    )
                     continue
                 f = lib.normalized_functions[sym.rebased_addr]
                 if not sym.is_weak:
@@ -66,7 +65,8 @@ class InterObjectCallgraph(object):
         func is a simproc or plt entry and, if so, looking up the name in the function symbol list.
         Result is placed in self.callgraph.
         """
-        self.callgraph = networkx.DiGraph()
+        raise NotImplementedError("replace networkx")
+        # self.callgraph = networkx.DiGraph()
         self.callgraph.add_nodes_from(self._all_funcs)
         for f, lib in self._all_funcs.items():
             for succ_addr in lib.callgraph[f.addr]:
@@ -78,7 +78,7 @@ class InterObjectCallgraph(object):
                     if match:
                         self.callgraph.add_edge(f, match[0])  # get the func out of the (func, lib) tuple
                     else:
-                        l.debug("Ignoring %s in %s" % (succ.name, lib.filename))
+                        log_debug("Ignoring %s in %s" % (succ.name, lib.filename))
 
     # Creation and Serialization
 
@@ -89,6 +89,7 @@ class InterObjectCallgraph(object):
 
     @staticmethod
     def load(f):
+        raise NotImplementedError("replace pickle")
         lmd = pickle.load(f)
 
         if not isinstance(lmd, InterObjectCallgraph):
@@ -97,6 +98,7 @@ class InterObjectCallgraph(object):
 
     @staticmethod
     def loads(data):
+        raise NotImplementedError("replace pickle")
         lmd = pickle.loads(data)
 
         if not isinstance(lmd, InterObjectCallgraph):
@@ -104,11 +106,14 @@ class InterObjectCallgraph(object):
         return lmd
 
     def dump_path(self, p):
+        raise NotImplementedError("replace pickle")
         with open(p, "wb") as f:
             self.dump(f)
 
     def dump(self, f):
+        raise NotImplementedError("replace pickle")
         return pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
 
     def dumps(self):
+        raise NotImplementedError("replace pickle")
         return pickle.dumps(self, pickle.HIGHEST_PROTOCOL)
