@@ -1,0 +1,37 @@
+funalyzer.funalyzer.core package
+================================
+
+Submodules
+----------
+
+funalyzer.funalyzer.core.database module
+----------------------------------------
+
+.. automodule:: funalyzer.funalyzer.core.database
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+funalyzer.funalyzer.core.parser module
+--------------------------------------
+
+.. automodule:: funalyzer.funalyzer.core.parser
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+funalyzer.funalyzer.core.target module
+--------------------------------------
+
+.. automodule:: funalyzer.funalyzer.core.target
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+Module contents
+---------------
+
+.. automodule:: funalyzer.funalyzer.core
+   :members:
+   :show-inheritance:
+   :undoc-members:

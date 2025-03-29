@@ -10,13 +10,18 @@ from binaryninjaui import (
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QImage, QPainter, QFont, QColor
 from PySide6.QtWidgets import QCheckBox, QLabel, QPushButton, QVBoxLayout
-from ..libmatch.lmdb import LibMatchDatabase
+from ..libmatch.libmatch_database import LibMatchDatabase
 
 
 # Sidebar widgets must derive from SidebarWidget, not QWidget. SidebarWidget is
 # a QWidget but provides callbacks for sidebar events, and must be created with
 # a title.
 class FunalyzerSidebarWidget(SidebarWidget):
+    """The sidebar widget for Funalyzer.
+
+    Args:
+        SidebarWidget: Base class for all sidebar widgets.
+    """
     def __init__(self, name, frame, data):
         super().__init__(name)
         self.data = data
@@ -57,6 +62,9 @@ class FunalyzerSidebarWidget(SidebarWidget):
 
 
     def on_btn_analyse_click(self):
+        """Analyse the current binary view.
+        Tries to match unknown functions to known functions.
+        """
         log_info("Analysing...")
         if self.view_frame:
             bv = self.view_frame.getCurrentBinaryView()

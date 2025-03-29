@@ -1,10 +1,10 @@
 # import os
-# from .lmd import LibMatchDescriptor
-# from .lmdb import LibMatchDatabase
+from .libmatch_descriptor import LibMatchDescriptor
+
 # from .iocg import InterObjectCallgraph
 # from .libmatch import LibMatch
 # from .utils import score_matches, PROJECT_KWARGS
-# from collections import defaultdict
+from collections import defaultdict
 # from clint.textui.colored import red, green, yellow
 
 
@@ -80,87 +80,88 @@ PROJECT_KWARGS = {"load_options": {"rebase_granularity": 0x1000}}
 # 
 # 
 # def score_matches(target_lmd: LibMatchDescriptor, matches, lmdb: LibMatchDatabase):
-#     precise_matches = 0
-#     imprecise_matches = 0
-#     incorrect_matches = 0
-#     missing = 0
-#     guesses = 0
-#     targ_sym_names = {x.name for x in target_lmd.viable_symbols}
-#     scorable_syms = targ_sym_names.intersection(lmdb.symbol_names)
-#     total_syms = len(scorable_syms)
-#     ignored = 0
-#     addrs_to_names = defaultdict(list)
-#     for sym in target_lmd.viable_symbols:
-#         addrs_to_names[sym.rebased_addr].append(sym.name)
-# 
-#     for sym in target_lmd.viable_symbols:
-#         if sym.name not in scorable_syms:
-#             # Maybe it's some app code we guessed
-#             f_addr = sym.rebased_addr
-#             if f_addr in matches:
-#                 match_infos = matches[f_addr]
-#                 if len(match_infos) == 1:
-#                     for lib, lmd, match in match_infos:
-#                         if isinstance(match, str):
-#                             # we just have the name
-#                             sym_name = match
-#                             guesses += 1
-#                             print(yellow("%#08x => %s (Guessed)" % (f_addr, sym_name)))
-#                         else:
-#                             ignored += 1
-#             continue
-#         f_addr = sym.rebased_addr
-#         if f_addr in target_lmd.banned_addrs:
-#             ingored += 1
-#             print("%#08x => Junk" % (f_addr))
-#         elif f_addr in matches:
-#             match_infos = matches[f_addr]
-#             if len(match_infos) == 1:
-#                 for lib, lmd, match in match_infos:
-#                     if isinstance(match, str):
-#                         # we just have the name
-#                         obj_func_addr = 0
-#                         sym_name = match
-#                         similarity_score = 0.0
-#                         filename = "(Guessed via context)"
-#                         guesses += 1
-#                     else:
-#                         similarity_score = match.similarity_score
-#                         obj_func_addr = match.function_b.addr
-#                         sym_name = lmd.function_manager.get_by_addr(obj_func_addr).name
-#                         filename = lmd.filename
-#                     if sym_name in addrs_to_names[f_addr]:
-#                         print(green("%#08x => %s:%s(%f) [Correct!] in %s" % (f_addr, lib, sym_name, similarity_score, filename)))
-#                         precise_matches += 1
-#                     else:
-#                         print(red("%#08x => %s:%s(%f) [WRONG, %s] in %s" % (f_addr, lib, sym_name, similarity_score, sym.name, lmd.filename)))
-#                         incorrect_matches += 1
-#             elif len(match_infos) == 0:
-#                 missing += 1
-#                 print(red("%#08x => %s(UNMATCHED)" % (f_addr, sym.name)))
-#             else:
-#                 imprecise_matches += 1
-#                 print(yellow("%#08x" % f_addr))
-#                 for lib, lmd, match in match_infos:
-#                     obj_func_addr = match.function_b.addr
-#                     sym_name = lmd.function_manager.get_by_addr(obj_func_addr).name
-#                     if sym_name == sym.name:
-#                         print(green("\t=> %s:%s(%f) in %s" % (lib, sym_name, match.similarity_score, lmd.filename)))
-#                     else:
-#                         print(yellow("\t=> %s:%s(%f) in %s" % (lib, sym_name, match.similarity_score, lmd.filename)))
-#         else:
-#             missing += 1
-#             print(red("%#08x => %s(UNMATCHED)" % (f_addr, sym.name)))
-#     print("Matched symbols: %d" % precise_matches)
-#     print("Missing symbols: %d" % missing)
-#     print("Incorrect symbols: %d" % incorrect_matches)
-#     print("Imprecise matches: %d" % imprecise_matches)
-#     print("Guesses: %d" % guesses)
-#     print("Ignored: %d" % ignored)
-#     print("Total symbols: %d " % total_syms)
-#     print("Hit rate: %f" % (precise_matches / total_syms))
-#     print("Error rate: %f" % (incorrect_matches / total_syms))
-#     print("Collision rate: %f" % (imprecise_matches / total_syms))
+def score_matches(target_lmd: LibMatchDescriptor, matches, lmdb):
+    precise_matches = 0
+    imprecise_matches = 0
+    incorrect_matches = 0
+    missing = 0
+    guesses = 0
+    targ_sym_names = {x.name for x in target_lmd.viable_symbols}
+    scorable_syms = targ_sym_names.intersection(lmdb.symbol_names)
+    total_syms = len(scorable_syms)
+    ignored = 0
+    addrs_to_names = defaultdict(list)
+    for sym in target_lmd.viable_symbols:
+        addrs_to_names[sym.rebased_addr].append(sym.name)
+
+    for sym in target_lmd.viable_symbols:
+        if sym.name not in scorable_syms:
+            # Maybe it's some app code we guessed
+            f_addr = sym.rebased_addr
+            if f_addr in matches:
+                match_infos = matches[f_addr]
+                if len(match_infos) == 1:
+                    for lib, lmd, match in match_infos:
+                        if isinstance(match, str):
+                            # we just have the name
+                            sym_name = match
+                            guesses += 1
+                            print(yellow("%#08x => %s (Guessed)" % (f_addr, sym_name)))
+                        else:
+                            ignored += 1
+            continue
+        f_addr = sym.rebased_addr
+        if f_addr in target_lmd.banned_addrs:
+            ingored += 1
+            print("%#08x => Junk" % (f_addr))
+        elif f_addr in matches:
+            match_infos = matches[f_addr]
+            if len(match_infos) == 1:
+                for lib, lmd, match in match_infos:
+                    if isinstance(match, str):
+                        # we just have the name
+                        obj_func_addr = 0
+                        sym_name = match
+                        similarity_score = 0.0
+                        filename = "(Guessed via context)"
+                        guesses += 1
+                    else:
+                        similarity_score = match.similarity_score
+                        obj_func_addr = match.function_b.addr
+                        sym_name = lmd.function_manager.get_by_addr(obj_func_addr).name
+                        filename = lmd.filename
+                    if sym_name in addrs_to_names[f_addr]:
+                        print(green("%#08x => %s:%s(%f) [Correct!] in %s" % (f_addr, lib, sym_name, similarity_score, filename)))
+                        precise_matches += 1
+                    else:
+                        print(red("%#08x => %s:%s(%f) [WRONG, %s] in %s" % (f_addr, lib, sym_name, similarity_score, sym.name, lmd.filename)))
+                        incorrect_matches += 1
+            elif len(match_infos) == 0:
+                missing += 1
+                print(red("%#08x => %s(UNMATCHED)" % (f_addr, sym.name)))
+            else:
+                imprecise_matches += 1
+                print(yellow("%#08x" % f_addr))
+                for lib, lmd, match in match_infos:
+                    obj_func_addr = match.function_b.addr
+                    sym_name = lmd.function_manager.get_by_addr(obj_func_addr).name
+                    if sym_name == sym.name:
+                        print(green("\t=> %s:%s(%f) in %s" % (lib, sym_name, match.similarity_score, lmd.filename)))
+                    else:
+                        print(yellow("\t=> %s:%s(%f) in %s" % (lib, sym_name, match.similarity_score, lmd.filename)))
+        else:
+            missing += 1
+            print(red("%#08x => %s(UNMATCHED)" % (f_addr, sym.name)))
+    print("Matched symbols: %d" % precise_matches)
+    print("Missing symbols: %d" % missing)
+    print("Incorrect symbols: %d" % incorrect_matches)
+    print("Imprecise matches: %d" % imprecise_matches)
+    print("Guesses: %d" % guesses)
+    print("Ignored: %d" % ignored)
+    print("Total symbols: %d " % total_syms)
+    print("Hit rate: %f" % (precise_matches / total_syms))
+    print("Error rate: %f" % (incorrect_matches / total_syms))
+    print("Collision rate: %f" % (imprecise_matches / total_syms))
 # 
 # 
 # def print_matches(target, lmd_name, matches):

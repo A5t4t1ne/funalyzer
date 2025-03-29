@@ -2,7 +2,6 @@ import binaryninja as bn
 from binaryninja import BasicBlock, LowLevelILCall, LowLevelILOperation, InstructionTextTokenType
 from binaryninja.binaryview import BinaryView
 from binaryninja.lowlevelil import LowLevelILBasicBlock, LowLevelILInstruction
-from database import FunalyzerDatabase
 from typing import List
 
 

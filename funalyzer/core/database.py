@@ -1,7 +1,7 @@
 from binaryninja.log import log_error
 import shelve
 import pickle
-from ..libmatch import LibMatchDatabase
+from ..libmatch.libmatch_database import LibMatchDatabase
 
 
 class FunalyzerDatabase:
@@ -25,7 +25,7 @@ class FunalyzerDatabase:
                 shelf[key] = value
 
     @staticmethod
-    def load_path(path: str) -> 'FunalyzerDatabase' | None:
+    def load_path(path: str) -> "'FunalyzerDatabase' | None":
         """Load DB from path"""
         try:
             with shelve.open(path) as shelf:

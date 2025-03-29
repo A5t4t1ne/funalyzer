@@ -193,12 +193,31 @@ class LibMatchDescriptor:
     #     return path
 
     @staticmethod
-    def load_path(path: str) -> dict:
+    def load_path(path: str) -> Dict[str, Any]:
+        """Load Database from path
+
+        Args:
+            path (str): path to libmatch db file.
+
+        Returns:
+            Dict[str, Any]: The values stored in the db.
+        """
         with shelve.open(path) as shelf:
             return LibMatchDescriptor.load(shelf)
 
     @staticmethod
-    def load(shelf: Shelf[Dict[str, Any]]) -> dict:
+    def load(shelf: Shelf[Dict[str, Any]]) -> Dict[str, Any]:
+        """Extract values from shelf
+
+        Args:
+            shelf (Shelf[Dict[str, Any]]): The shelf object.
+
+        Raises:
+            ValueError: If shelf is not a Shelf object.
+
+        Returns:
+            Dict[str, Any]: The values stored in the db.
+        """
         if not isinstance(shelf, Shelf):
             raise ValueError(f"Shelf object expected, got {type(shelf)}")
         # TODO ev: some check if it is a valid descriptor

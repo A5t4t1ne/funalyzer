@@ -1,0 +1,9 @@
+LICENSE
+README.md
+pyproject.toml
+funalyzer/__init__.py
+funalyzer.egg-info/PKG-INFO
+funalyzer.egg-info/SOURCES.txt
+funalyzer.egg-info/dependency_links.txt
+funalyzer.egg-info/requires.txt
+funalyzer.egg-info/top_level.txt

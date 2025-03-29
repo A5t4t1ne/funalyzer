@@ -1,0 +1,18 @@
+funalyzer package
+=================
+
+Subpackages
+-----------
+
+.. toctree::
+   :maxdepth: 4
+
+   funalyzer.funalyzer
+
+Module contents
+---------------
+
+.. automodule:: funalyzer
+   :members:
+   :show-inheritance:
+   :undoc-members:

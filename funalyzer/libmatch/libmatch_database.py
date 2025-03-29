@@ -1,13 +1,16 @@
 from collections import defaultdict
 from typing import Dict, List
-from .lmd import LibMatchDescriptor
+from .libmatch_descriptor import LibMatchDescriptor
+from .utils import score_matches
 from binaryninja import log_info, log_warn, log_error, log_debug
 from binaryninja.binaryview import BinaryView
 from pathlib import Path
 import shelve
 from shelve import Shelf
+from typing import Dict
 
 PROJECT_KWARGS = []
+
 
 class LibMatchDatabase(object):
     """
@@ -23,9 +26,7 @@ class LibMatchDatabase(object):
         self.lib_lmds = lib_lmds
         self.lmds = dict()
         self._build_sym_list(lib_lmds)
-        self.symbols = defaultdict(
-            list
-        )  # Mapping of string names to all the libraries and objects that contain them.
+        self.symbols = defaultdict(list)  # Mapping of string names to all the libraries and objects that contain them.
 
     def _smoosh(self, candidates):
         for f_addr, content in candidates.items():
@@ -41,11 +42,16 @@ class LibMatchDatabase(object):
                 candidates[f_addr] = [content[0]]
         return candidates
 
-    def _postprocess_matches(self, target_lmd, results):
-        """
-        Clean up the matches for the user.
-        This encodes the behavior "we consider it a match if we
-        match with exactly one name"
+    def _postprocess_matches(self, target_lmd: LibMatchDescriptor, results: dict) -> Dict[int, str]:
+        """Clean up the matches for the user.
+        This encodes the behavior "we consider it a match if we match with exactly one name".
+
+        Args:
+            target_lmd (LibMatchDescriptor): The target library.
+            results (dict): The results of all previous matchings.
+
+        Returns:
+            Dict[int, str]: A dictionary of addresses to symbol names.
         """
         final_matches = {}
         collisions = 0
@@ -57,10 +63,9 @@ class LibMatchDatabase(object):
                 continue
             if f_addr not in target_lmd.viable_functions:
                 # we put a name on it, but it's a stub!
-                # What. Ever.
                 junk += 1
                 continue
-            for lib, lmd, match in match_infos:
+            for _, lmd, match in match_infos:
                 if isinstance(match, str):
                     sym_name = match
                     guesses += 1
@@ -68,41 +73,53 @@ class LibMatchDatabase(object):
                     obj_func_addr = match.function_b.addr
                     sym_name = lmd.function_manager.get_by_addr(obj_func_addr).name
                 final_matches[f_addr] = sym_name
-        log_warn(f"Detected {collisions} collisions")
-        log_warn(f"Ignored {junk} junk function matches")
-        log_warn(f"Made {guesses} guesses")
-        log_warn(f"Matched {len(list(final_matches.keys()))} symbols")
+        if collisions > 0:
+            log_warn(f"Detected {collisions} collisions")
+        else:
+            log_info(f"Detected {collisions} collisions")
+        if junk > 0:
+            log_warn(f"Ignored {junk} junk function matches")
+        else:
+            log_info(f"Ignored {junk} junk function matches")
+
+        log_info(f"Made {guesses} guesses")
+        log_info(f"Matched {len(list(final_matches.keys()))} symbols")
         return final_matches
 
-    # def match(self, lmd_path: str, score=False):
-    #     """
-    #     Scan the database and try to match all libraries with the target.
+    def match(self, lmd_path: str, score=False) -> dict:
+        """Scan the database and try to match all libraries with the target.
 
-    #     :param lib: Either a string (program path) or a LibMatchDescriptor
-    #     :return: A dictionary of addresses in the program to possible symbols.
-    #     """
-    #     lmd = LibMatchDescriptor.load_path(lmd_path)
-    #     candidates = []
-    #     try:
-    #         self.lm = LibMatch(lmd, self)
-    #         candidates = self.lm._candidate_matches
-    #         plain_candidates = self.lm._plain_matches
-    #     except Exception as e:
-    #         log_error(f"Error computing matches: {e}")
+        Args:
+            lmd_path (str): LibMatch Descriptor path.
+            score (bool, optional): _description_. Defaults to False.
 
+        Returns:
+            dict: A dictionary of addresses in the program to possible symbols.
+        """
+        
 
-    #     # TODO: This is where we put multi-library heuristics!
-    #     candidates = self._smoosh(candidates)
-    #     plain_candidates = self._smoosh(plain_candidates)
-    #     if score:
-    #         print("############### UNREFINED MATCHES ###############")
-    #         score_matches(lmd_path, plain_candidates, self)
-    #         input()
-    #         print("############### FINAL MATCHES ###############")
-    #         score_matches(lmd_path, candidates, self)
+        lmd = LibMatchDescriptor.load_path(lmd_path)
+        candidates = []
+        try:
+            self.lm = LibMatch(lmd, self)
+            candidates = self.lm._candidate_matches
+            plain_candidates = self.lm._plain_matches
+        except Exception as e:
+            log_error(f"Error computing matches: {e}")
+            return {}
 
-    #     out = self._postprocess_matches(lmd, candidates)
-    #     return out
+        # TODO low: This is where we put multi-library heuristics!
+        candidates = self._smoosh(candidates)
+        plain_candidates = self._smoosh(plain_candidates)
+        if score:
+            print("############### UNREFINED MATCHES ###############")
+            score_matches(lmd, plain_candidates, self)
+            input()
+            print("############### FINAL MATCHES ###############")
+            score_matches(lmd, candidates, self)
+
+        out = self._postprocess_matches(lmd, candidates)
+        return out
 
     # Creation and Serialization
     @staticmethod
@@ -120,16 +137,16 @@ class LibMatchDatabase(object):
         if not lib_dir.is_dir():
             log_error(f"{lib_dir} is not a directory")
         for dir_name, _, file_list in lib_dir.walk():
-             log_debug(f"Found directory: {dir_name}")
-             for file in file_list:
-                 file = Path(file)
-                 if file.suffix == ".o" or file.suffix == ".obj":
-                     fullname = dir_name / file
-                     log_debug(f"Making signature for {fullname}")
-                     try:
-                         lmds.add(LibMatchDescriptor(bv, fullname))
-                     except Exception as e:
-                         log_error(f"Could not make signature for {fullname}\n{e}")
+            log_debug(f"Found directory: {dir_name}")
+            for file in file_list:
+                file = Path(file)
+                if file.suffix == ".o" or file.suffix == ".obj":
+                    fullname = dir_name / file
+                    log_debug(f"Making signature for {fullname}")
+                    try:
+                        lmds.add(LibMatchDescriptor(bv, fullname))
+                    except Exception as e:
+                        log_error(f"Could not make signature for {fullname}\n{e}")
         return lmds
 
     @staticmethod
