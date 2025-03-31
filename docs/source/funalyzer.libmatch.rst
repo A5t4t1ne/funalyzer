@@ -4,6 +4,14 @@ funalyzer.libmatch package
 Submodules
 ----------
 
+funalyzer.libmatch.functiondiff module
+--------------------------------------
+
+.. automodule:: funalyzer.libmatch.functiondiff
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 funalyzer.libmatch.iocg module
 ------------------------------
 

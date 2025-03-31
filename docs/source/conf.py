@@ -4,7 +4,7 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 import os
 import sys
-sys.path.insert(0, os.path.abspath('../../..'))
+sys.path.insert(0, os.path.abspath('../..'))
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
@@ -35,5 +35,3 @@ autodoc_mock_imports = ['binaryninjaui', 'PySide6']
 
 html_theme = 'sphinx_rtd_theme'
 html_static_path = ['_static']
-
-

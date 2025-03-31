@@ -1,12 +1,14 @@
 .. Funalyzer documentation master file, created by
-   sphinx-quickstart on Fri Mar 28 10:11:52 2025.
+   sphinx-quickstart on Mon Mar 31 16:58:44 2025.
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
 Funalyzer documentation
 =======================
 
-Documentation for the Binary Ninja Plugin 'Funalyzer'.
+Add your content using ``reStructuredText`` syntax. See the
+`reStructuredText <https://www.sphinx-doc.org/en/master/usage/restructuredtext/index.html>`_
+documentation for details.
 
 
 .. toctree::
@@ -14,4 +16,3 @@ Documentation for the Binary Ninja Plugin 'Funalyzer'.
    :caption: Contents:
 
    modules
-
