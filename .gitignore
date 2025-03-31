@@ -5,3 +5,4 @@ bins
 binaryninja/
 binaryninjaui/
 **__pycache__
+**build/
