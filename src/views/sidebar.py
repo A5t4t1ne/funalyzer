@@ -64,7 +64,7 @@ class FunalyzerSidebarWidget(SidebarWidget):
             log_debug(f"found {len(bv.functions)} functions")
             try:
                 db = FunalyzerDatabase.create_from_path("/home/dave/hslu/SEM6/BAA/libmatch/objects/arm-none-eabi")
-                db.save_to("arm_none_eabi.fdb")
+                db.save_to("arm_none_eabi.fdb", True)
             except Exception as e:
                 log_error(f"failed to generate DB: {e}")
             log_debug(f"Generating the DB took {time.perf_counter() - start:.5f}s")
