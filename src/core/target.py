@@ -3,7 +3,7 @@ from typing import List
 from .parser import UniformedBasicBlock, UniformedFunction
 
 
-class TargetBinary():
+class Descriptor():
     """Class for describing a target binary file to analyse."""
     def __init__(self, bv: BinaryView):
         self.bv = bv

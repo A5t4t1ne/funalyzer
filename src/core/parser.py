@@ -1,24 +1,60 @@
+from enum import Enum, unique
 import binaryninja as bn
 from binaryninja import BasicBlock, LowLevelILCall, LowLevelILOperation, InstructionTextTokenType
 from binaryninja.binaryview import BinaryView
 from binaryninja.lowlevelil import LowLevelILBasicBlock, LowLevelILInstruction
-from typing import List
+from typing import Any, List, Dict
+
+
+@unique
+class ParsedDataKey(Enum):
+    ORIG_FUNCTION = 1
+    GRAPH = 2
+    CALL_SITES = 3
+    BASIC_BLOCKS = 4
+    START = 5
+
+    def __str__(self):
+        return self.name.lower()
 
 
 class UniformedFunction:
     """A uniformed function structure for further use"""
 
-    def __init__(self, bv: BinaryView, function: bn.Function):
+    def __init__(
+        self,
+        bv: BinaryView,
+        function: bn.Function,
+        parsed_data: Dict[ParsedDataKey, dict | int] | None = None,
+    ):
         self.bv = bv
         self.orig_function = function
         self.graph = function.create_graph()
-        self.call_sites: dict = {}
-        self.startpoint: int = function.start
-        self.basic_blocks: dict = {}
-        self.addr = function.start
+        self.start = function.start
 
-        self._parse_basic_blocks()
-        self._setup_call_sites()
+        if parsed_data is None:
+            self.call_sites: dict = {}
+            self.basic_blocks: dict = {}
+
+            self._parse_basic_blocks()
+            self._setup_call_sites()
+        else:
+            self.call_sites = parsed_data[ParsedDataKey.CALL_SITES]
+            self.basic_blocks = parsed_data[ParsedDataKey.BASIC_BLOCKS]
+
+    def get_essentials(self) -> Dict[ParsedDataKey, Any]:
+        """Return essential information about the function.
+
+        Returns:
+            Dict[EssentialsKey, Any]: A dictionary containing essential information about the function.
+        """
+        return {
+            # EssentialsKey.ORIG_FUNCTION: self.orig_function,
+            # EssentialsKey.GRAPH: self.graph,
+            ParsedDataKey.CALL_SITES: self.call_sites,
+            ParsedDataKey.BASIC_BLOCKS: self.basic_blocks,
+            # ParsedDataKey.START: self.start,
+        }
 
     def _parse_basic_blocks(self):
         # TODO low: naming is shit
@@ -50,14 +86,14 @@ class UniformedFunction:
         if block not in self.basic_blocks:
             self.basic_blocks[block] = []
         self.basic_blocks[block].append(succ)
-        
+
         # Propagate any existing merges from successor
         if succ in self.basic_blocks:
             self.basic_blocks[block].extend(self.basic_blocks[succ])
             del self.basic_blocks[succ]
 
     def _setup_call_sites(self):
-        for block in self.orig_function: # was initially self.graph, maybe I'm wrong?
+        for block in self.orig_function:  # was initially self.graph, maybe I'm wrong?
             call_targets = self._get_call_targets(block)
             if call_targets:
                 self.call_sites[block.start] = call_targets
@@ -82,6 +118,9 @@ class UniformedFunction:
             if token.type == InstructionTextTokenType.PossibleAddressToken:
                 return int(token.value)
         return None
+
+    def __repr__(self):
+        return f"<UniformedFunction at {self.start:x}>"
 
 
 class UniformedBasicBlock:
@@ -145,17 +184,18 @@ class UniformedBasicBlock:
         return f"<Basic Block for {self.start:x}, {size} bytes>"
 
 
-
 class LibDescriptor:
     """
     A class to precompute all information for a project.
     """
+
     def __init__(self, proj, banned_names=("$d", "$t")):
         pass
+
     # def __init__(self, proj, banned_names=("$d", "$t")):
     #     # TODO high: implement
-    #     self.cfg = proj.analyses.CFGFast(force_complete_scan=False, 
-    #             resolve_indirect_jumps=True, 
+    #     self.cfg = proj.analyses.CFGFast(force_complete_scan=False,
+    #             resolve_indirect_jumps=True,
     #             normalize=True,
     #             cross_references=True,
     #             detect_tail_calls=True)
@@ -221,7 +261,7 @@ class LibDescriptor:
     #             self.viable_symbols.add(sym)
     #     proj.loader.close()
     #     del proj.loader
-    #     
+    #
     # def is_trivial(self, proj, f):
     #     """
     #     Return True is a function is "trivial"
@@ -243,7 +283,6 @@ class LibDescriptor:
     #         #    # Either way, it can't do anything useful.
     #         #g    return True
     #     return False
-
 
     # def is_hooked(self, addr):
     #     return addr in self._sim_procedures
@@ -294,7 +333,6 @@ class LibDescriptor:
     #         return ordered_succ
     #     except (SimMemoryError, SimEngineError):
     #         return sorted(succ, key=lambda x:x.addr)
-
 
     # def symbol_for_addr(self, addr):
     #     for s in self.loader.main_object.symbols:
@@ -360,4 +398,3 @@ class LibDescriptor:
     # def __str__(self):
     #     # TODO: add better str format?
     #     return repr(self)
-

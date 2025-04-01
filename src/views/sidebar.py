@@ -1,4 +1,4 @@
-from binaryninja import log_error, log_info
+from binaryninja import log_error, log_info, log_debug
 from binaryninja.binaryview import BinaryView
 from binaryninjaui import (
     SidebarWidget,
@@ -10,7 +10,9 @@ from binaryninjaui import (
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QImage, QPainter, QFont, QColor
 from PySide6.QtWidgets import QCheckBox, QLabel, QPushButton, QVBoxLayout
-from ..libmatch.libmatch_database import LibMatchDatabase
+from ..core.database import FunalyzerDatabase
+from ..core.parser import UniformedFunction
+import time
 
 
 # Sidebar widgets must derive from SidebarWidget, not QWidget. SidebarWidget is
@@ -22,12 +24,13 @@ class FunalyzerSidebarWidget(SidebarWidget):
     Args:
         SidebarWidget: Base class for all sidebar widgets.
     """
+
     def __init__(self, name, frame, data):
         super().__init__(name)
         self.data = data
         self.actionHandler = UIActionHandler()
         self.actionHandler.setupActionHandler(self)
-        self.view_frame = None
+        self.view_frame = frame
         self.view = None
 
         layout = QVBoxLayout()
@@ -56,10 +59,17 @@ class FunalyzerSidebarWidget(SidebarWidget):
         log_info("Well, your CPU cores are mine now, because I need them to make a DB :)")
         if self.view_frame:
             bv = self.view_frame.getCurrentBinaryView()
-            LibMatchDatabase.build(bv, "/home/dave/hslu/SEM6/BAA/libmatch/objects/arm-none-eabi", "dinimam.lmdb")
+
+            start = time.perf_counter()
+            log_debug(f"found {len(bv.functions)} functions")
+            try:
+                db = FunalyzerDatabase.create_from_path("/home/dave/hslu/SEM6/BAA/libmatch/objects/arm-none-eabi")
+                db.save_to("arm_none_eabi.fdb")
+            except Exception as e:
+                log_error(f"failed to generate DB: {e}")
+            log_debug(f"Generating the DB took {time.perf_counter() - start:.5f}s")
         else:
             log_error("No view frame, did you open a binary file?")
-
 
     def on_btn_analyse_click(self):
         """Analyse the current binary view.
@@ -69,7 +79,7 @@ class FunalyzerSidebarWidget(SidebarWidget):
         if self.view_frame:
             bv = self.view_frame.getCurrentBinaryView()
             if isinstance(bv, BinaryView):
-                log_info("unknown functions:")
+                log_info("unknown functions found:")
                 for func in list(bv.functions)[:10]:
                     if func.name.startswith("sub_"):
                         log_info(f"Function: {func.name}")
@@ -84,7 +94,7 @@ class FunalyzerSidebarWidget(SidebarWidget):
             self.view = view_frame.getCurrentViewInterface()
             self.view_frame = view_frame
 
-    def contextMenuEvent(self, _event):
+    def contextMenuEvent(self, _):
         self.m_contextMenuManager.show(self.m_menu, self.actionHandler)
 
 
