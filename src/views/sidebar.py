@@ -17,14 +17,15 @@ from PySide6.QtWidgets import (
     QPushButton,
     QVBoxLayout,
     QTreeWidget,
-    QTreeWidgetItem
+    QTreeWidgetItem,
+    QTextEdit,
+    QSpacerItem,
+    QGridLayout,
+    QSizePolicy,
 )
-from ..core.database import FunalyzerDatabase
 import time
-from google import genai
-
-
-PROMPT = "Along with this message I send you low level intermediary instructions from disassembled code. The code was disassembled with binary ninja. Can you try to guess what the code does?\n\n"
+from ..core.database import FunalyzerDatabase
+from ..llm.request import llm_request, LLM_REQUEST_TYPE
 
 
 # Sidebar widgets must derive from SidebarWidget, not QWidget. SidebarWidget is
@@ -44,27 +45,17 @@ class FunalyzerSidebarWidget(SidebarWidget):
         self.actionHandler.setupActionHandler(self)
         self.view_frame = frame
         self.view = None
+        self.selected_function = None
 
+        # ---- Begin UI Items -----
         layout = QVBoxLayout()
         title = QLabel(name, self)
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
+        spacer_small = QSpacerItem(0, 30)
+        spacer_medium = QSpacerItem(0, 50)
 
-        self.options = [QCheckBox("LibMatch"), QCheckBox("LLM")]
-
-        self.btn_train_model = QPushButton("Train")
-        self.btn_train_model.clicked.connect(self.on_btn_train_click)
-
-        self.btn_analyse = QPushButton("Analyze")
-        self.btn_analyse.clicked.connect(self.on_btn_analyse_click)
-
-        for option in self.options:
-            layout.addWidget(option)
-
-        layout.addWidget(self.btn_train_model)
-        layout.addWidget(self.btn_analyse)
-
-
+        # ---- Function tree -----
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Function Name", "Address", "Possible function name"])
         self.tree.setColumnCount(3)
@@ -72,68 +63,93 @@ class FunalyzerSidebarWidget(SidebarWidget):
         self.tree.header().resizeSection(2, 170)
 
         self.tree.itemClicked.connect(self.on_item_clicked)
+        self.tree.itemDoubleClicked.connect(self.on_item_double_clicked)
 
         layout.addWidget(self.tree)
 
+        self.btn_ask_llm = QPushButton("Ask LLM")
+        self.btn_ask_llm.clicked.connect(self.on_btn_ask_llm_click)
+        layout.addWidget(self.btn_ask_llm)
+
+        layout.addItem(spacer_small)
+
+        # ---- LLM Output -----
+        title = QLabel("LLM Output", self)
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
 
         self.llm_output = QTextEdit()
         self.llm_output.setReadOnly(True)
         layout.addWidget(self.llm_output)
 
+        layout.addItem(spacer_medium)
 
-        layout.addStretch()
+        # ---- Options -----
+        grid = QGridLayout()
+
+        self.options = [QCheckBox("LibMatch"), QCheckBox("LLM")]
+        for row in range(1):  # 3 rows
+            for col in range(len(self.options)):  # 3 columns
+                grid.addWidget(self.options[row + col], row, col)
+
+        layout.addLayout(grid)
+
+        # ---- Buttons -----
+        self.btn_train_model = QPushButton("Generate DB")
+        self.btn_train_model.clicked.connect(self.on_btn_train_click)
+
+        self.btn_analyse = QPushButton("Analyze")
+        self.btn_analyse.clicked.connect(self.on_btn_analyse_click)
+
+        layout.addWidget(self.btn_train_model)
+        layout.addWidget(self.btn_analyse)
+
+        # ---- Set layout ----
 
         self.setLayout(layout)
 
     def on_item_clicked(self, item, column):
-        address = item.data(0, Qt.UserRole)
+        address = int(item.text(1), 16)
         if address:
-            # print(f"Jumping to address: {hex(address)} {item}, {column}")
-            pass
+            self.selected_func_addr = address
+        else:
+            self.selected_func_addr = 0
+
+    def on_item_double_clicked(self, item, column):
+        current_scroll_position = self.tree.verticalScrollBar().value()
+
+        selected_item_text = item.text(0)
+        address = int(item.text(1), 16)
+        self.bv.navigate(self.bv.view, address)
+
+        self.tree.verticalScrollBar().setValue(current_scroll_position)
+
+        items = self.tree.findItems(selected_item_text, Qt.MatchExactly, 0)
+        if items:
+            self.tree.setCurrentItem(items[0])
+            items[0].setSelected(True)
+
+    def on_btn_ask_llm_click(self):
+        function = self.bv.get_function_at(self.selected_func_addr)
+        resp = llm_request(LLM_REQUEST_TYPE.ANALYSE, function)
+        self.llm_output.setPlainText(resp)
 
     def on_btn_train_click(self):
         log_info("Well, your CPU cores are mine now, because I need them to make a DB :)")
-        time.sleep(0.5)
         start = time.perf_counter()
         try:
             db = FunalyzerDatabase.create_from_path("/home/dave/hslu/SEM6/BAA/libmatch/objects/arm-none-eabi")
             db.save_to("arm_none_eabi.fdb", True)
         except Exception as e:
             log_error(f"failed to generate DB: {e}")
+
         log_debug(f"Generating the DB took {time.perf_counter() - start:.5f}s")
 
     def on_btn_analyse_click(self):
         """Analyse the current binary view.
         Tries to match unknown functions to known functions.
         """
-        log_info("Analysing...")
-        il_funcs = []
-        func_names = ""
-        if self.view_frame:
-            bv = self.view_frame.getCurrentBinaryView()
-            if isinstance(bv, BinaryView):
-                log_info("Unknown functions found:")
-                for func in list(bv.functions):
-                    if func.name == "sub_4700":
-                        func_il = func.low_level_il
-                        il_funcs.append("\n".join([str(instr) for instr in func_il.instructions]))
-
-                        log_info(f"> {func.name}")
-                        func_names += f"\n{func.name}"
-                if len(il_funcs) > 0:
-                    # self.txt_funcs.setPlainText(func_names)
-                    self.txt_funcs.setPlainText(str(il_funcs[0]))
-                    log_info("Starting LLM API request")
-                    API_KEY = "AIzaSyBO4nlCdN0yDklPhLpa2V8Y5nns5KX7gDI"
-                    client = genai.Client(api_key=API_KEY)
-                    response = client.models.generate_content(model="gemini-2.0-flash", contents=[PROMPT + il_funcs[0]])
-                    log_info(response.text)
-                    with open("response.txt", "w") as f:
-                        f.write(response.text)
-                else:
-                    self.txt_funcs.setPlainText("None found")
-        else:
-            log_error("No view frame, did you open a binary file?")
+        pass
 
     def notifyViewChanged(self, view_frame):
         if view_frame is None:
