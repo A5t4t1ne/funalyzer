@@ -1,10 +1,9 @@
 from binaryninja.log import log_error, log_debug, log_info
-import binaryninja as bn
+import os
 import shelve
 from pathlib import Path
 from typing import Dict
 from .parser import UniformedFunction
-import itertools
 
 
 class FunalyzerDatabase:
@@ -20,6 +19,9 @@ class FunalyzerDatabase:
 
     def __setitem__(self, key, value):
         self._data[key] = value
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}: self.data"
 
     def save_to(self, path: str, overwrite: bool = False):
         """Save object to path"""
@@ -37,14 +39,14 @@ class FunalyzerDatabase:
             pass
 
         try:
-            with shelve.open(p) as shelf:
+            with shelve.open(p.resolve()) as shelf:
                 shelf.clear()
                 for filename, functions in self._data.items():
                     log_debug(f"Processing: {filename}")
                     data = {addr: func.get_essentials() for addr, func in functions.items()}
                     shelf[filename] = data
 
-                log_info(f"Processed {len(shelf)} files")
+                log_debug(f"Processed {len(shelf)} files")
             log_info(f"Entries successfully saved to DB at {p.resolve()}.")
             return True
         except Exception as e:
@@ -52,7 +54,7 @@ class FunalyzerDatabase:
             return False
 
     @staticmethod
-    def load_db_from_path(path: str) -> "FunalyzerDatabase":
+    def load_from_path(path: str) -> "FunalyzerDatabase":
         """Load existing database from path.
 
         Args:
@@ -61,12 +63,19 @@ class FunalyzerDatabase:
         Returns:
             _type_: FunalyzerDatabase object
         """
-        with shelve.open(path) as shelf:
-            db_data = dict()
-            for k, essentials in shelf.items():
-                db_data[k] = UniformedFunction(None, None, parsed_data=essentials)
+        if not os.path.exists(path):
+            log_error(f"File {path} not found")
+            return None
+        try:
+            with shelve.open(path) as shelf:
+                db_data = dict()
+                for k, essentials in shelf.items():
+                    db_data[k] = UniformedFunction(None, None, parsed_data=essentials)
 
-            return FunalyzerDatabase(db_data)
+                return FunalyzerDatabase(db_data)
+        except Exception as e:
+            log_error(f"While trying to load db: {e}")
+            return FunalyzerDatabase(data={})
 
     @staticmethod
     def create_from_path(path: str) -> "FunalyzerDatabase":
@@ -78,19 +87,25 @@ class FunalyzerDatabase:
         Returns:
             FunalyzerDatabase: A database of analyzed object files
         """
-        valid_extensions = ['.o', '.obj', '.bin', '.bdsig']
+        valid_extensions = [".o", ".obj", ".bin", ".bdsig"]
 
         data = dict()
-        directory = Path(path)
+        directory = Path(path).resolve()
         if directory.exists() and directory.is_dir():
             # recursively load object files from directory and create a database
-            files = itertools.chain.from_iterable(directory.glob(f'**/*{ext}') for ext in valid_extensions )
-            for f in files:
+            files = itertools.chain.from_iterable(directory.glob(f"**/*{ext}") for ext in valid_extensions)
+            dir_parts_count = len(directory.parts)
+            for i, f in enumerate(files):
+                # if i >= 10:
+                #     break
                 try:
-                    log_debug(f"Analyzing {f.resolve()}")
-                    with bn.load(str(f.resolve())) as bv:
-                        data[bv.file.filename] = {str(func.start): UniformedFunction(bv, func) for func in bv.functions}
+                    log_debug(f"Analyzing {f}")
+                    with bn.load(f) as bv:
+                        fname = Path(bv.file.filename)
+                        rel_fname = Path("/".join(fname.parts[dir_parts_count - 1 :]))
+                        log_info(f"{str(rel_fname)}")
+                        data[str(rel_fname)] = {str(func.start): UniformedFunction(bv, func) for func in bv.functions}
                 except Exception as e:
-                    log_error(f"Couldn't analyze file: {type(e)} - {e}")
+                    log_error(f"Couldn't analyze file: {e}")
 
         return FunalyzerDatabase(data)

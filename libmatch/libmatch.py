@@ -5,10 +5,11 @@ from .functiondiff import FunctionDiff
 from collections import defaultdict
 from binaryninja import log_info, log_error, log_warn
 from typing import List, Dict
+from ..core.parser import LibDescriptor
 
 
-class LibMatch(object):
-    def __init__(self, binary_lmd: LibMatchDescriptor, lmdb: LibMatchDatabase):
+class LibMatch():
+    def __init__(self, binary_descriptor: LibDescriptor, lmdb: LibMatchDatabase):
         """
         :param binary_lmd: The LibMatchDescriptor of the target binary
         :param lib_lmds: An iterable of LibMatchDescriptors corresponding to libraries
@@ -36,23 +37,22 @@ class LibMatch(object):
         """
         self._first_order_matches[lib_name] = {}
         for lmd in lib_lmds:
-            pass
-            # self._first_order_matches[lib_name][lmd] = {}
+            self._first_order_matches[lib_name][lmd] = {}
 
-            # for faddr in lmd.viable_functions:
-            #     # match the lib func against the binary if the first order heuristic passes
-            #     attrs = lmd.function_attributes[faddr]
-            #     results = set()
-            #     # results = {bin_faddr for bin_faddr, bin_attrs in self.binary_lmd.function_attributes.items()
-            #     #           if self._first_order_heuristic(attrs, bin_attrs)}
-            #     for bin_faddr, bin_attrs in self.binary_lmd.function_attributes.items():
-            #         if faddr == 0x4002BD and bin_faddr == 0x00003D45:
-            #             import ipdb
+            for faddr in lmd.viable_functions:
+                # match the lib func against the binary if the first order heuristic passes
+                attrs = lmd.function_attributes[faddr]
+                results = set()
+                # results = {bin_faddr for bin_faddr, bin_attrs in self.binary_lmd.function_attributes.items()
+                #           if self._first_order_heuristic(attrs, bin_attrs)}
+                for bin_faddr, bin_attrs in self.binary_lmd.function_attributes.items():
+                    if faddr == 0x4002BD and bin_faddr == 0x00003D45:
+                        import ipdb
 
-            #             ipdb.set_trace()
-            #         if self._first_order_heuristic(attrs, bin_attrs):
-            #             results.add(bin_faddr)
-            #     self._first_order_matches[lib_name][lmd][faddr] = results
+                        ipdb.set_trace()
+                    if self._first_order_heuristic(attrs, bin_attrs):
+                        results.add(bin_faddr)
+                self._first_order_matches[lib_name][lmd][faddr] = results
 
     @classmethod
     def _second_order_heuristic(cls, binary_lmd, lib_lmd, binary_faddr, lib_faddr):

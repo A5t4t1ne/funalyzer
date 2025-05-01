@@ -6,3 +6,4 @@ binaryninja/
 binaryninjaui/
 **__pycache__
 **build/
+funalyzer.egg-info

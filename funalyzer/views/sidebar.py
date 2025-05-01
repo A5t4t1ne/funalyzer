@@ -1,13 +1,11 @@
 from binaryninja import log_error, log_info, log_debug
 from binaryninja.binaryview import BinaryView
 from binaryninjaui import (
-    Sidebar,
     SidebarWidget,
     UIActionHandler,
     SidebarWidgetLocation,
     SidebarContextSensitivity,
     SidebarWidgetType,
-    UIContext,
 )
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QImage, QPainter, QFont, QColor
@@ -21,16 +19,14 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QSpacerItem,
     QGridLayout,
-    QSizePolicy,
 )
 import time
 from ..core.database import FunalyzerDatabase
+from ..core.parser import LibDescriptor
 from ..llm.request import llm_request, LLM_REQUEST_TYPE
+from ..libmatch.libmatch import LibMatch
 
 
-# Sidebar widgets must derive from SidebarWidget, not QWidget. SidebarWidget is
-# a QWidget but provides callbacks for sidebar events, and must be created with
-# a title.
 class FunalyzerSidebarWidget(SidebarWidget):
     """The sidebar widget for Funalyzer.
 
@@ -52,7 +48,7 @@ class FunalyzerSidebarWidget(SidebarWidget):
         title = QLabel(name, self)
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
-        spacer_small = QSpacerItem(0, 30)
+        spacer_small = QSpacerItem(0, 20)
         spacer_medium = QSpacerItem(0, 50)
 
         # ---- Function tree -----
@@ -91,6 +87,7 @@ class FunalyzerSidebarWidget(SidebarWidget):
         for row in range(1):  # 3 rows
             for col in range(len(self.options)):  # 3 columns
                 grid.addWidget(self.options[row + col], row, col)
+        self.options[0].setChecked(True)
 
         layout.addLayout(grid)
 
@@ -131,7 +128,7 @@ class FunalyzerSidebarWidget(SidebarWidget):
 
     def on_btn_ask_llm_click(self):
         function = self.bv.get_function_at(self.selected_func_addr)
-        resp = llm_request(LLM_REQUEST_TYPE.ANALYSE, function)
+        resp = llm_request(LLM_REQUEST_TYPE.ANALYZE, function)
         self.llm_output.setPlainText(resp)
 
     def on_btn_train_click(self):
@@ -149,18 +146,36 @@ class FunalyzerSidebarWidget(SidebarWidget):
         """Analyse the current binary view.
         Tries to match unknown functions to known functions.
         """
-        pass
+        if not self.bv:
+            log_error("No binary view present")
+        elif self.options[0].isChecked(): # LibMatch
+            # LibMatch
+            fdb = FunalyzerDatabase.load_from_path('/home/dave/arm-none-eabi.fdb')
+            if fdb:
+                lib_descriptor = LibDescriptor(self.bv)
+                lm = LibMatch(lib_descriptor, fdb)
+                lm.match()
+            else:
+                log_error("Failed to load database")
+        elif self.options[1].isChecked(): # LMM
+            pass
+        else:
+            log_error("No analyze option selected")
+             
 
     def notifyViewChanged(self, view_frame):
         if view_frame is None:
             self.view_frame = None
             self.view = None
+            log_debug("can't update withou bv")
+            return
         else:
             self.view = view_frame.getCurrentViewInterface()
             self.view_frame = view_frame
             self.bv = view_frame.getCurrentBinaryView()
 
-        functions = [func for func in self.bv.functions if func.name.startswith("sub_")]
+        # functions = [func for func in self.bv.functions if func.name.startswith("sub_")]
+        functions = [func for func in self.bv.functions]
         self.tree.clear()
         for func in functions:
             item = QTreeWidgetItem([func.name, hex(func.start), ""])
@@ -208,37 +223,3 @@ class FunalyzerSidebarWidgetType(SidebarWidgetType):
         # This example widget uses a single instance and detects view changes.
         return SidebarContextSensitivity.SelfManagedSidebarContext
 
-
-def update_unknown_functions(bv: BinaryView):
-    log_info("yep, definitely came here")
-    ctx = UIContext.activeContext()
-    if not ctx:
-        return
-
-    # Access the main window and sidebar widgets
-    main_window = ctx.mainWindow()
-    sidebar = main_window.findChild(Sidebar)
-    log_info(dir(sidebar))
-
-    # Get all instances of the registered widget type
-    for widget in SidebarWidgetType.instances:
-        if isinstance(widget, FunalyzerSidebarWidget):
-            functions = [func for func in bv.functions if func.name.startswith("sub_")]
-            funcs_str = "\n".join([str(f.name) for f in functions])
-            widget.update_functions(funcs_str)
-
-    # Find our sidebar widget in the current window
-    # sidebar = ctx.getSidebar()
-    # if not sidebar:
-    #     return
-
-    # # Locate an instance of our custom widget
-    # widget = next((w for w in sidebar.widgets if isinstance(w, FunalyzerSidebarWidget)), None)
-
-    # if widget:
-    #     functions = [func for func in bv.functions if func.name.startswith('sub_')]
-    #     funcs_str = "\n".join([str(f.name) for f in functions])
-    #     widget.update_functions(funcs_str)
-
-
-# BinaryViewType.add_binaryview_finalized_event(update_unknown_functions)
