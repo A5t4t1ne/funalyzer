@@ -1,5 +1,4 @@
-from binaryninja import log_error, log_info, log_debug
-from binaryninja.binaryview import BinaryView
+from binaryninja.log import log_error, log_info, log_debug
 from binaryninjaui import (
     SidebarWidget,
     UIActionHandler,
@@ -136,7 +135,7 @@ class FunalyzerSidebarWidget(SidebarWidget):
         start = time.perf_counter()
         try:
             db = FunalyzerDatabase.create_from_path("/home/dave/hslu/SEM6/BAA/libmatch/objects/arm-none-eabi")
-            db.save_to("arm_none_eabi.fdb", True)
+            db.save_to('/home/dave/arm_none_eabi.fdb', True)
         except Exception as e:
             log_error(f"failed to generate DB: {e}")
 
@@ -150,11 +149,11 @@ class FunalyzerSidebarWidget(SidebarWidget):
             log_error("No binary view present")
         elif self.options[0].isChecked(): # LibMatch
             # LibMatch
-            fdb = FunalyzerDatabase.load_from_path('/home/dave/arm-none-eabi.fdb')
+            fdb = FunalyzerDatabase.load_from_path('/home/dave/arm_none_eabi.fdb')
             if fdb:
                 lib_descriptor = LibDescriptor(self.bv)
                 lm = LibMatch(lib_descriptor, fdb)
-                lm.match()
+                lm.match(lib_descriptor, fdb)
             else:
                 log_error("Failed to load database")
         elif self.options[1].isChecked(): # LMM

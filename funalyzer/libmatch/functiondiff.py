@@ -3,6 +3,7 @@ import logging
 import types
 import math
 from collections import deque
+from typing import Any, Iterable, List, Tuple
 
 
 l = logging.getLogger("bdsig.functiondiff")
@@ -175,6 +176,8 @@ def differing_constants(block_a, block_b):
             continue
 
         differences = compare_statement_dict(statement, statement_2)
+        if isinstance(differences, Difference):
+            raise Exception(f"{differences=} can't be of type Difference")
         for d in differences:
             if d.type != DIFF_VALUE:
                 raise UnmatchedStatementsException("Instruction has changed")
@@ -184,11 +187,13 @@ def differing_constants(block_a, block_b):
     return changes
 
 
-def compare_statement_dict(statement_1, statement_2):
+# TODO: cleanup / uniform these fucked up types
+def compare_statement_dict(statement_1: Tuple[tuple, list] | Tuple[int, bytes, float, str] | List[Any] | float | str | bytes |  None, statement_2) -> List[Difference] | Difference:
+
     # should return whether or not the statement's type/effects changed
     # need to return the specific number that changed too
 
-    if type(statement_1) != type(statement_2):
+    if type(statement_1) is not type(statement_2):
         return [Difference(DIFF_TYPE, None, None)]
 
     # None
@@ -209,9 +214,12 @@ def compare_statement_dict(statement_1, statement_2):
         if len(statement_1) != len(statement_2):
             return Difference(DIFF_TYPE, None, None)
 
-        differences = []
+        differences: List[Difference] = []
         for s1, s2 in zip(statement_1, statement_2):
-            differences += compare_statement_dict(s1, s2)
+            ret_val = compare_statement_dict(s1, s2)
+            if not isinstance(ret_val, list):
+                raise Exception("value of {ret_val=} isn't what it should be")
+            differences += ret_val
         return differences
 
     # Yan's weird types
@@ -226,6 +234,9 @@ def compare_statement_dict(statement_1, statement_2):
             continue
 
         new_diffs = compare_statement_dict(getattr(statement_1, attr), getattr(statement_2, attr))
+
+        if not isinstance(new_diffs, Iterable):
+            raise Exception("new_diffs is Difference, can't iterate")
         # set the difference types
         for diff in new_diffs:
             if diff.type is None:
@@ -235,7 +246,7 @@ def compare_statement_dict(statement_1, statement_2):
     return differences
 
 
-class FunctionDiff(object):
+class FunctionDiff():
     """
     This class computes the a diff between two functions.
     """

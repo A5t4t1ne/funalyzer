@@ -1,11 +1,12 @@
 # import os
 from .libmatch_descriptor import LibMatchDescriptor
+from binaryninja.log import log_info
 
 # from .iocg import InterObjectCallgraph
 # from .libmatch import LibMatch
 # from .utils import score_matches, PROJECT_KWARGS
 from collections import defaultdict
-# from clint.textui.colored import red, green, yellow
+from clint.textui.colored import red, green, yellow
 
 
 PROJECT_KWARGS = {"load_options": {"rebase_granularity": 0x1000}}
@@ -26,7 +27,7 @@ PROJECT_KWARGS = {"load_options": {"rebase_granularity": 0x1000}}
 #     for matches in results:
 #         score_matches(lmd_name, matches)
 # 
-#     print("###################################")
+#     log_info("###################################")
 #     return postprocess_matches(lmd_name, results)
 # 
 # 
@@ -106,14 +107,14 @@ def score_matches(target_lmd: LibMatchDescriptor, matches, lmdb):
                             # we just have the name
                             sym_name = match
                             guesses += 1
-                            print(yellow("%#08x => %s (Guessed)" % (f_addr, sym_name)))
+                            log_info(yellow("%#08x => %s (Guessed)" % (f_addr, sym_name)))
                         else:
                             ignored += 1
             continue
         f_addr = sym.rebased_addr
         if f_addr in target_lmd.banned_addrs:
-            ingored += 1
-            print("%#08x => Junk" % (f_addr))
+            ignored += 1
+            log_info("%#08x => Junk" % (f_addr))
         elif f_addr in matches:
             match_infos = matches[f_addr]
             if len(match_infos) == 1:
@@ -131,40 +132,40 @@ def score_matches(target_lmd: LibMatchDescriptor, matches, lmdb):
                         sym_name = lmd.function_manager.get_by_addr(obj_func_addr).name
                         filename = lmd.filename
                     if sym_name in addrs_to_names[f_addr]:
-                        print(green("%#08x => %s:%s(%f) [Correct!] in %s" % (f_addr, lib, sym_name, similarity_score, filename)))
+                        log_info(green("%#08x => %s:%s(%f) [Correct!] in %s" % (f_addr, lib, sym_name, similarity_score, filename)))
                         precise_matches += 1
                     else:
-                        print(red("%#08x => %s:%s(%f) [WRONG, %s] in %s" % (f_addr, lib, sym_name, similarity_score, sym.name, lmd.filename)))
+                        log_info(red("%#08x => %s:%s(%f) [WRONG, %s] in %s" % (f_addr, lib, sym_name, similarity_score, sym.name, lmd.filename)))
                         incorrect_matches += 1
             elif len(match_infos) == 0:
                 missing += 1
-                print(red("%#08x => %s(UNMATCHED)" % (f_addr, sym.name)))
+                log_info(red("%#08x => %s(UNMATCHED)" % (f_addr, sym.name)))
             else:
                 imprecise_matches += 1
-                print(yellow("%#08x" % f_addr))
+                log_info(yellow("%#08x" % f_addr))
                 for lib, lmd, match in match_infos:
                     obj_func_addr = match.function_b.addr
                     sym_name = lmd.function_manager.get_by_addr(obj_func_addr).name
                     if sym_name == sym.name:
-                        print(green("\t=> %s:%s(%f) in %s" % (lib, sym_name, match.similarity_score, lmd.filename)))
+                        log_info(green("\t=> %s:%s(%f) in %s" % (lib, sym_name, match.similarity_score, lmd.filename)))
                     else:
-                        print(yellow("\t=> %s:%s(%f) in %s" % (lib, sym_name, match.similarity_score, lmd.filename)))
+                        log_info(yellow("\t=> %s:%s(%f) in %s" % (lib, sym_name, match.similarity_score, lmd.filename)))
         else:
             missing += 1
-            print(red("%#08x => %s(UNMATCHED)" % (f_addr, sym.name)))
-    print("Matched symbols: %d" % precise_matches)
-    print("Missing symbols: %d" % missing)
-    print("Incorrect symbols: %d" % incorrect_matches)
-    print("Imprecise matches: %d" % imprecise_matches)
-    print("Guesses: %d" % guesses)
-    print("Ignored: %d" % ignored)
-    print("Total symbols: %d " % total_syms)
-    print("Hit rate: %f" % (precise_matches / total_syms))
-    print("Error rate: %f" % (incorrect_matches / total_syms))
-    print("Collision rate: %f" % (imprecise_matches / total_syms))
+            log_info(red("%#08x => %s(UNMATCHED)" % (f_addr, sym.name)))
+    log_info("Matched symbols: %d" % precise_matches)
+    log_info("Missing symbols: %d" % missing)
+    log_info("Incorrect symbols: %d" % incorrect_matches)
+    log_info("Imprecise matches: %d" % imprecise_matches)
+    log_info("Guesses: %d" % guesses)
+    log_info("Ignored: %d" % ignored)
+    log_info("Total symbols: %d " % total_syms)
+    log_info("Hit rate: %f" % (precise_matches / total_syms))
+    log_info("Error rate: %f" % (incorrect_matches / total_syms))
+    log_info("Collision rate: %f" % (imprecise_matches / total_syms))
 # 
 # 
-# def print_matches(target, lmd_name, matches):
+# def log_info_matches(target, lmd_name, matches):
 #     if isinstance(target_lmd_name, LibMatchDescriptor):
 #         target_lmd = target_lmd_name
 #     else:
@@ -173,13 +174,13 @@ def score_matches(target_lmd: LibMatchDescriptor, matches, lmdb):
 #         if target_lmd.symbol_for_addr(f_addr):
 #             # For easier scoring
 #             s = target_lmd.symbol_for_addr(f_addr)
-#             print("Function at %#08x[%s]:" % (f_addr, s.name))
+#             log_info("Function at %#08x[%s]:" % (f_addr, s.name))
 #         else:
-#             print("Function at %#08x:" % f_addr)
+#             log_info("Function at %#08x:" % f_addr)
 #         for lmd, match in match_infos:
 #             obj_func_addr = match.function_b.addr
 #             sym_name = lmd.function_manager.get_by_addr(obj_func_addr).name
-#             print("[%f] %s(%#08x) in %s" % (match.similarity_score, sym_name, obj_func_addr, lmd.filename))
+#             log_info("[%f] %s(%#08x) in %s" % (match.similarity_score, sym_name, obj_func_addr, lmd.filename))
 # 
 # 
 # def make_all_signatures(rootDir):

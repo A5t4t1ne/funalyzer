@@ -1,7 +1,6 @@
 from enum import Enum, unique
 import binaryninja as bn
-from binaryninja import BasicBlock, LowLevelILCall, LowLevelILOperation, InstructionTextTokenType, SymbolType
-from binaryninja.log import log_debug
+from binaryninja import BasicBlock, Function, LowLevelILCall, LowLevelILOperation, InstructionTextTokenType, SymbolType
 from binaryninja.binaryview import BinaryView
 from binaryninja.lowlevelil import LowLevelILBasicBlock, LowLevelILInstruction, LowLevelILFunction
 from binaryninja.flowgraph import CoreFlowGraph
@@ -16,6 +15,7 @@ class ParsedDataKey(Enum):
     BASIC_BLOCKS = 4
     START = 5
     LLIL = 6
+    NAME = 7
 
     def __str__(self):
         return self.name.lower()
@@ -52,9 +52,13 @@ class UniformedFunction:
                 self.call_sites: dict = {}
                 self.basic_blocks: dict = {}
                 self.start: int = function.start
+                self.name = function.name
+
+                if not self.low_level_il:
+                    self.low_level_il = []
 
                 self.llil_str: str = "\n".join([str(instr) for instr in self.low_level_il])
-                self.graph.layout_and_wait()
+                self.graph.layout()
                 self._parse_basic_blocks()
                 self._setup_call_sites()
             else:
@@ -64,6 +68,7 @@ class UniformedFunction:
             self.call_sites = parsed_data[ParsedDataKey.CALL_SITES]
             self.basic_blocks = parsed_data[ParsedDataKey.BASIC_BLOCKS]
             self.llil_str = parsed_data[ParsedDataKey.LLIL]
+            self.name = parsed_data[ParsedDataKey.NAME]
 
             self.low_level_il = []
             self.graph = None
@@ -80,6 +85,7 @@ class UniformedFunction:
             ParsedDataKey.CALL_SITES: self.call_sites,
             ParsedDataKey.BASIC_BLOCKS: self.basic_blocks,
             ParsedDataKey.START: self.start,
+            ParsedDataKey.NAME: self.name,
         }
 
     def _parse_basic_blocks(self):
@@ -225,15 +231,13 @@ class UniformedBasicBlock:
 
 class LibDescriptor:
     def __init__(self, bv: BinaryView, banned_names=("$d", "$t")):
-        # Open the binary in Binary Ninja
         self.bv = bv
         self.bv.update_analysis_and_wait()
         self.filename = bv.file.filename
 
-        # Build the callgraph using Binary Ninja's API
-        # self.callgraph = self.bv.call_graph # needs to be done with func.create_graph()
+        # self.callgraph = self.bv.call_graph # needs to be done with func.create_graph() if needed
 
-        # SimProcedures do not exist in Binary Ninja; skip or adapt this logic
+        # TODO: adapt logic, SimProcedures do not exist in Binary Ninja
         self._sim_procedures = {}
 
         self.banned_addrs = set()
@@ -241,11 +245,12 @@ class LibDescriptor:
         self.normalized_blocks = {}
         self.ordered_successors = {}
 
-        # Enumerate functions and normalize them
+        # Normalize functions
         for func in self.bv.functions:
-            self.normalized_functions[func.start] = UniformedFunction(bv, func)
-            for block in func.basic_blocks:
-                self.normalized_blocks[(func.start, block.start)] = UniformedBasicBlock(bv, block.low_level_il, func)
+            uni_func = UniformedFunction(bv, func)
+            self.normalized_functions[func.start] = uni_func
+            for block in func.low_level_il or []:
+                self.normalized_blocks[(func.start, block.start)] = UniformedBasicBlock(bv, block, uni_func)
 
         # Compute ordered successors for each block
         for func in self.bv.functions:
@@ -264,21 +269,14 @@ class LibDescriptor:
 
         # Collect viable symbols
         self.viable_symbols = set()
-        for sym in self.bv.symbols.values():
-            if sym.type == SymbolType.FunctionSymbol and \
-               not sym.auto and \
-               sym.address not in self.banned_addrs:
-                self.viable_symbols.add(sym)
+        for sym_list in self.bv.symbols.values():
+            for sym in sym_list:
+                if sym.type == SymbolType.FunctionSymbol and \
+                   not sym.auto and \
+                   sym.address not in self.banned_addrs:
+                    self.viable_symbols.add(sym)
 
-    def _normalize_function(self, func):
-        # Placeholder for your normalization logic
-        return func
-
-    def _normalize_block(self, block):
-        # Placeholder for your normalization logic
-        return block
-
-    def is_trivial(self, func):
+    def is_trivial(self, func: Function):
         # A function is trivial if it consists of a single block with <=2 instructions
         if len(func.basic_blocks) == 1:
             block = next(iter(func.basic_blocks))
@@ -295,15 +293,16 @@ class LibDescriptor:
             attributes[func.start] = (num_blocks, num_edges, num_calls)
         return attributes
 
-    def _get_ordered_successors(self, block):
+    def _get_ordered_successors(self, block: BasicBlock):
         # Returns the ordered list of successor blocks (by address)
         return [edge.target.start for edge in block.outgoing_edges]
 
-    def symbol_for_addr(self, addr):
+    def symbol_for_addr(self, addr: int):
         # Find a symbol for the given address
-        for sym in self.bv.symbols.values():
-            if sym.address == addr:
-                return sym
+        for sym_list in self.bv.symbols.values():
+            for sym in sym_list:
+                if sym.address == addr:
+                    return sym
         return None
 
     # Serialization and other methods would be similar, using pickle or your preferred method
