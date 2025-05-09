@@ -1,35 +1,50 @@
-from binaryninja import log_info, log_error
-from enum import Enum
+import binaryninja as bn
+from binaryninja.log import log_info, log_error
+from enum import Enum, auto
 from google import genai
-from ..core.parser import UniformedFunction
+from google.genai.chats import GenerateContentResponse
+from funalyzer.config.llm_config import Prompts, GEMINI_API_KEY
 
-
-PROMPT = "Along with this message I send you low level intermediary instructions from disassembled code. The code was disassembled with binary ninja. Can you try to guess what the code does and describe it very briefly. If you recognize the function from a library, tell me the function name, otherwise try to guess it. Please put your brief description and/or guess of the function name at the top of your response followed by reasoning. Please exclude any markdown formatting symbols.\n\n"
-API_KEY = "AIzaSyBO4nlCdN0yDklPhLpa2V8Y5nns5KX7gDI"
 
 
 class LLM_REQUEST_TYPE(Enum):
-    COMPARE = 1
-    ANALYZE = 2
+    COMPARE = auto()
+    ANALYZE_FUNC = auto()
+    RENAME_FUNC = auto()
+    RENAME_VAR = auto()
 
 
-def llm_request(req_type: LLM_REQUEST_TYPE, func: UniformedFunction) -> str:
+def llm_request(req_type: LLM_REQUEST_TYPE, func: bn.function.Function, variable: str | None = None) -> str:
     func_il = func.low_level_il
     func_str = ""
     for bb in func_il:
-        func_str = "\n".join(str(instr) for instr in bb)
+        func_str += "\n".join(str(instr) for instr in bb)
 
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    response: GenerateContentResponse | None = None
 
     if req_type == LLM_REQUEST_TYPE.COMPARE:
         log_error("LLM comparing not implemented yet")
-    elif req_type is LLM_REQUEST_TYPE.ANALYZE:
+    elif req_type is LLM_REQUEST_TYPE.ANALYZE_FUNC:
         log_info("Starting LLM API request")
         try:
-            client = genai.Client(api_key=API_KEY)
-            response = client.models.generate_content(model="gemini-2.0-flash", contents=[PROMPT + func_str])
-            return response.text
+            prompt = Prompts.ANALYZE_FUNCTION.replace("[LLIL_CODE]", func_str)
+            response = client.models.generate_content(model="gemini-2.0-flash", contents=[prompt])
         except Exception as e:
             log_error(f"Request to LLM failed: {e}")
             return "Request to LLM failed"
+    elif req_type == LLM_REQUEST_TYPE.RENAME_FUNC:
+        prompt = Prompts.RENAME_FUNCTION.replace("[LLIL_CODE]", func_str)
+        log_info(prompt)
+        response = client.models.generate_content(model="gemini-2.0-flash", contents=[prompt])
+    elif req_type == LLM_REQUEST_TYPE.RENAME_VAR:
+        if variable:
+            pass
+        else:
+            pass
+        log_error("LLM rename var not implemented yet")
     else:
-        raise ValueError(f"{req_type} is not a valid option")
+        log_error("non-valid LLM request type submitted")
+    
+    if response:
+        return response.text or ""
