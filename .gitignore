@@ -1,9 +1,6 @@
 .venv
-PySide6
 *.lmdb
 bins
-binaryninja/
-binaryninjaui/
 **__pycache__
 **build/
 funalyzer.egg-info
