@@ -15,7 +15,12 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 keywords = ["Binary", "Ninja", "plugin", "LibMatch", "python"]
-dependencies = ["google-genai"]
+dependencies = [
+	# "google-genai", 
+	"google-generativeai",
+	"python-dotenv==1.1.0", 
+	"mcp==1.8.0"
+]
 requires-python = ">=3.12"
 
 
