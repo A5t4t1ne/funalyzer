@@ -1,10 +1,11 @@
 import binaryninja as bn
 from binaryninja.log import log_debug, log_error, log_warn, log_info
 from binaryninja.enums import LowLevelILOperation
+from binaryninja.lowlevelil import LowLevelILCall, LowLevelILInstruction, LowLevelILJump
 from binaryninja.plugin import lowlevelil
-from .functiondiff import FunctionDiff
-from ..core.parser import LibDescriptor, UniformedBasicBlock, UniformedFunction
-from ..core.database import FunalyzerDatabase
+from funalyzer.libmatch.functiondiff import FunctionDiff
+from funalyzer.core.parser import LibDescriptor, UniformedFunction
+from funalyzer.core.database import FunalyzerDatabase
 from collections import defaultdict
 from typing import Any, Dict, DefaultDict, List, Set, Tuple
 from clint.textui.colored import red, yellow, green
@@ -21,7 +22,7 @@ class LibMatch(object):
         self.ambiguous_funcs = []
         self._computed = False
         self._first_order_matches: DefaultDict[str, Dict[LibDescriptor, Dict[int, Set]]] = defaultdict()
-        self._second_order_matches: DefaultDict[str, Dict[Any, Dict[int, List[Tuple[int, Any]]]]] = defaultdict(dict)
+        self._second_order_matches: DefaultDict[str, Dict[LibDescriptor, Dict[int, List[Tuple[int, FunctionDiff]]]]] = defaultdict(dict)
 
     def compute(self) -> None:
         """
@@ -34,7 +35,7 @@ class LibMatch(object):
             self._compute_first_order_matches(libname, descriptor)
             self._compute_second_order_matches(lib_name=libname)
             self._compute_third_order()
-            # self._compute_fourth_order()
+            self._compute_fourth_order()
 
         # Post-processing and deduplication
         self._dedup()
@@ -66,8 +67,8 @@ class LibMatch(object):
         incorrect_matches = 0
         missing = 0
         guesses = 0
-        targ_sym_names = {x.name for x in target_desc.viable_func_addrs}
-        scorable_syms = targ_sym_names.intersection(fdb.symbol_names)
+        targ_sym_addrs = set(target_desc.viable_func_addrs)
+        scorable_syms = targ_sym_addrs.intersection(fdb.symbol_addresses)
         total_syms = len(scorable_syms)
         ignored = 0
         addrs_to_names = defaultdict(list)
@@ -248,30 +249,6 @@ class LibMatch(object):
         # TODO: perfect matching
         return FunctionDiff(binary_desc, lib_desc, bin_func, lib_func)
 
-    def normalize_il(self, instr: lowlevelil.LowLevelILInstruction) -> LowLevelILOperation | None:
-        """Normalize IL by removing pointers, relocations, and unresolved targets"""
-        if instr.operation in [LowLevelILOperation.LLIL_CONST_PTR, LowLevelILOperation.LLIL_CONST]:
-            # Check if constant is a relocation target
-            if instr.function.view and instr.function.view.relocation_ranges_at(instr.value.value):
-                return None
-            return LowLevelILOperation.LLIL_CONST
-
-        # Handle calls and jumps
-        if instr.operation in [LowLevelILOperation.LLIL_CALL, LowLevelILOperation.LLIL_JUMP]:
-            # Check if target is resolvable
-            if not instr.dest.is_constant:
-                return None
-
-        return instr.operation
-
-    def get_block_signature(self, block: UniformedBasicBlock):
-        """Create normalized signature for basic block"""
-        sig = []
-        for instr in block:
-            normalized = normalize_il(instr)
-            if normalized is not None:
-                sig.append(normalized)
-        return tuple(sig)
 
     def _compute_second_order_matches(self, lib_name) -> None:
         """
@@ -285,33 +262,34 @@ class LibMatch(object):
                 for maddr in func_matches:
                     if maddr not in self.binary_desc.uniformed_functions:
                         continue
-                    log_info("finally not")
-                    fdiff = self._second_order_heuristic(self.binary_desc, lib_desc, maddr, lib_faddr)
+                    fdiff = self._second_order_heuristic(self.binary_desc, lib_desc, maddr, lib_faddr) 
                     if fdiff.probably_identical:
-                        self._second_order_matches[lib_name][lib_desc][lib_faddr].append((maddr, lib_desc))
+                        self._second_order_matches[lib_name][lib_desc][lib_faddr].append((maddr, fdiff))
 
-    def _postprocess_second_order_matches(self) -> DefaultDict[int, list]:
+    def _postprocess_second_order_matches(self) -> DefaultDict[int, List[Tuple[str, LibDescriptor, FunctionDiff]]]:
         # Gather the matches based on the functions in the original binary:
         matches: DefaultDict[int, List[Tuple[str, LibDescriptor, FunctionDiff]]] = defaultdict(list)
         # for lib_res in self._second_order_matches:
         for lib_name, lib_matches in self._second_order_matches.items():
-            for obj_lmd, obj_res in lib_matches.items():
+            for obj_libd, obj_res in lib_matches.items():
                 for _, obj_func_matches in obj_res.items():  # obj_func_addr, obj_func_matches
                     if obj_func_matches:
                         for target_addr, match_info in obj_func_matches:
+                            log_info(type(match_info))
                             if len(matches[target_addr]) > 0:
                                 # A collision! But is it a real one?
                                 # Did we match better?
-                                _, _, prev_match_info = matches[target_addr][0]  # prev_lib, prev_lmd,
-                                if match_info.similarity_score > prev_match_info.similarity_score:
-                                    # Better match
-                                    matches[target_addr] = [(lib_name, obj_lmd, match_info)]
-                                elif match_info.similarity_score == prev_match_info.similarity_score:
-                                    matches[target_addr].append((lib_name, obj_lmd, match_info))
-                                else:
-                                    continue  # Worse match, ignore
+                                # _, _, prev_match_info = matches[target_addr][0]  # prev_lib, prev_lmd,
+                                # if match_info.similarity_score > prev_match_info.similarity_score:
+                                #     # Better match
+                                #     matches[target_addr] = [(lib_name, obj_libd, match_info)]
+                                # elif match_info.similarity_score == prev_match_info.similarity_score:
+                                #     matches[target_addr].append((lib_name, obj_libd, match_info))
+                                # else:
+                                #     continue  # Worse match, ignore
+                                pass
                             else:
-                                matches[target_addr].append((lib_name, obj_lmd, match_info))
+                                matches[target_addr].append((lib_name, obj_libd, match_info))
         return matches
 
     def _compute_third_order(self) -> None:
@@ -354,8 +332,8 @@ class LibMatch(object):
                     the_name = fd.function_b.name
             if isinstance(fd, str) and the_name == fd:
                 continue
-            # elif the_name == fd.function_b.name:
-            #    continue
+            elif the_name == fd.function_b.name:
+               continue
             elif isinstance(fd, UniformedFunction) and the_name == fd.name:
                 continue
             else:
@@ -365,7 +343,7 @@ class LibMatch(object):
     recursion_list = []
 
     def _narrow_third_order(
-        self, f_addr: int, matches: List[Tuple[str, LibDescriptor, FunctionDiff | str]], exact_narrowing=False
+        self, f_addr: int, matches: List[Tuple[str, LibDescriptor, FunctionDiff]], exact_narrowing=False
     ):
         """
         Refine candidate matches for a function based on its call graph context.
@@ -377,6 +355,10 @@ class LibMatch(object):
 
         This method attempts to disambiguate matches by comparing callees of the candidate functions.
         """
+        for match in matches:
+            if not isinstance(match[-1], FunctionDiff):
+                raise ValueError(f"third argument is not fdiff, but instead {type(match[-1])} in {match}")
+
         if f_addr in self.recursion_list:
             log_warn(f"Warning: recursion to {f_addr:x}!")
             return
@@ -391,19 +373,17 @@ class LibMatch(object):
 
         # Get the target function object from the first match's FunctionDiff (or string)
         first_match = matches[0]
-        fd_or_name = first_match[2]
-        if isinstance(fd_or_name, str):
+        fdiff = first_match[2]
+        if isinstance(fdiff, str):
             log_warn(f"Function {f_addr:x} has only guessed matches, cannot refine by call context.")
             self.recursion_list.remove(f_addr)
             return
-        target_func = fd_or_name.function_a  # Binary Ninja Function object in target binary
+        target_func = fdiff.function_a  # Binary Ninja Function object in target binary
 
         # Collect callees from the target function
         target_callees = []
-        for call_site in target_func.call_sites:
-            # call_site is a tuple (address, list of callees)
-            _, callees = call_site
-            callees_set = set()
+        for _, callees in target_func.call_sites.items():
+            callees_set: Set[Tuple[int, str]] = set()
             for callee_addr in callees:
                 if not self.binary_desc.bv.is_valid_offset(callee_addr):
                     # Address outside the binary view
@@ -430,18 +410,17 @@ class LibMatch(object):
 
         # Now, for each candidate match, check if callees are compatible
         narrowed_matches = []
-        for lib_name, lib_lmd, fd_or_name in matches:
-            if isinstance(fd_or_name, str):
-                # Guessed name, keep only if exact narrowing is off
-                if not exact_narrowing:
-                    narrowed_matches.append((lib_name, lib_lmd, fd_or_name))
-                continue
+        for lib_name, lib_lmd, fdiff in matches:
+            # if isinstance(fdiff, str):
+            #     # Guessed name, keep only if exact narrowing is off
+            #     if not exact_narrowing:
+            #         narrowed_matches.append((lib_name, lib_lmd, fdiff))
+            #     continue
 
-            lib_func = fd_or_name.function_b  # Function in library
+            lib_func = fdiff.function_b  # Function in library
             lib_callees = []
-            for call_site in lib_func.call_sites:
-                _, callees = call_site
-                callees_set = set()
+            for callees in lib_func.call_sites.values():
+                callees_set: Set[Tuple[int, str]] = set()
                 for callee_addr in callees:
                     if not lib_lmd.bv.is_valid_offset(callee_addr):
                         callee_name = "UnresolvableCallTarget"
@@ -464,7 +443,7 @@ class LibMatch(object):
                 if exact_narrowing:
                     continue
                 else:
-                    narrowed_matches.append((lib_name, lib_lmd, fd_or_name))
+                    narrowed_matches.append((lib_name, lib_lmd, fdiff))
                     continue
 
             # Check if all callees sets intersect non-empty
@@ -475,16 +454,16 @@ class LibMatch(object):
                     break
 
             if compatible:
-                narrowed_matches.append((lib_name, lib_lmd, fd_or_name))
+                narrowed_matches.append((lib_name, lib_lmd, fdiff))
 
         if len(narrowed_matches) < len(matches):
             log_info(f"Narrowed matches for function {f_addr:#08x} from {len(matches)} to {len(narrowed_matches)}")
             self._candidate_matches[f_addr] = narrowed_matches
             # Recursively narrow callees
-            for _, _, fd_or_name in narrowed_matches:
-                if isinstance(fd_or_name, str):
+            for _, _, fdiff in narrowed_matches:
+                if isinstance(fdiff, str):
                     continue
-                for call_site in fd_or_name.function_a.call_sites:
+                for call_site in fdiff.function_a.call_sites:
                     _, callees = call_site
                     for callee_addr in callees:
                         if callee_addr in self._candidate_matches:

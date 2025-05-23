@@ -142,10 +142,12 @@ class FunalyzerSidebarWidget(SidebarWidget):
     def on_btn_generate_db_click(self):
         log_info("Well, your CPU cores are mine now, because I need them to make a DB :)")
         start = time.perf_counter()
+        # debugpy.wait_for_client()
+        # debugpy.breakpoint()
         try:
             db = FunalyzerDatabase.create_from_path("/home/dave/hslu/SEM6/BAA/libmatch/objects/arm-none-eabi")
             db.save_to('/home/dave/arm_none_eabi.fdb', True)
-        except ArithmeticError as e:
+        except Exception as e:
             log_error(f"failed to generate DB: {e}")
 
         log_debug(f"Generating the DB took {time.perf_counter() - start:.5f}s")
@@ -161,8 +163,8 @@ class FunalyzerSidebarWidget(SidebarWidget):
             log_debug("Starting LibMatch analysis")
             start = time.perf_counter()
 
-            # debugpy.wait_for_client()
-            # debugpy.breakpoint()
+            debugpy.wait_for_client()
+            debugpy.breakpoint()
 
             fdb = FunalyzerDatabase.load_from_path('/home/dave/arm_none_eabi.fdb')
             if fdb:

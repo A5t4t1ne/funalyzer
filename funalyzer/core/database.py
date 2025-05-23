@@ -3,7 +3,7 @@ import binaryninja as bn
 import os
 import shelve
 from pathlib import Path
-from typing import Dict, ItemsView
+from typing import Dict, ItemsView, Set
 from .parser import LibDescriptor
 import itertools
 
@@ -15,6 +15,8 @@ class FunalyzerDatabase:
 
     def __init__(self, lib_descriptors: Dict[str, LibDescriptor]) -> None:
         self.lib_descriptors = lib_descriptors
+        self.symbol_addresses: Set[int] = set()
+        self._build_sym_list()
 
     def __getitem__(self, key):
         return self.lib_descriptors.get(key, None)
@@ -24,6 +26,16 @@ class FunalyzerDatabase:
 
     def __repr__(self):
         return f"{self.__class__.__name__}: self.data"
+
+    def _build_sym_list(self):
+        """
+        Build the total list of symbols this database contains.
+        If its not in this list, we are for sure not going to match well with it
+        (used for scoring)
+        """
+        for _, lib_desc in self.lib_descriptors.items():
+            addrs = set(lib_desc.viable_func_addrs)
+            self.symbol_addresses.update(addrs)
 
     def items(self) -> ItemsView[str, LibDescriptor]:
         return self.lib_descriptors.items()
@@ -54,7 +66,7 @@ class FunalyzerDatabase:
                 log_debug(f"Processed {len(shelf)} files")
             log_info(f"Entries successfully saved to DB at {p.resolve()}.")
             return True
-        except ArithmeticError as e:
+        except Exception as e:
             log_error(f"Could not save db: {e}")
             return False
 
@@ -81,7 +93,7 @@ class FunalyzerDatabase:
                     db_data[fname] = LibDescriptor(parsed_data=descriptor)
 
                 return FunalyzerDatabase(db_data)
-        except ConnectionError as e:
+        except Exception as e:
             log_error(f"While trying to load db from {path}: {e}")
             return FunalyzerDatabase({})
 
@@ -105,9 +117,9 @@ class FunalyzerDatabase:
             files = itertools.chain.from_iterable(directory.glob(f"**/*{ext}") for ext in valid_extensions)
             dir_parts_count = len(directory.parts)
             for i, f in enumerate(files):
-                if i >= 10:
+                if i >= 10 and "gpio_api" not in f.name:
                     # pass
-                    break
+                    continue
                 try:
                     log_debug(f"Analyzing {f}")
                     with bn.load(f) as bv:
