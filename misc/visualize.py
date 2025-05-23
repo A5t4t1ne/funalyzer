@@ -1,7 +1,10 @@
 import sys
-sys.path.append('/home/dave/hslu/SEM6/BAA/')
-import funalyzer
+from typing import Dict, List
+sys.path.append('/home/dave/hslu/SEM6/BAA/funalyzer/')
 
+from funalyzer.core.parser import ParsedDataKey
+
+import funalyzer
 from pathlib import Path
 import shelve
 
@@ -17,24 +20,16 @@ with shelve.open(p) as db:
         # Extract keys and values into lists for plotting
         keys = list(db.keys())
         # print(keys)
-        values = [db[key] for key in keys]
+        values: List[Dict[str, int]] = [db[key] for key in keys]
     except KeyError as e:
         print(f"KeyError: {e}")
     except ModuleNotFoundError as e:
         print(f"ModuleNotFoundError: {e}")
 
 
-for key, val in zip(keys, values):
+for fname, val in zip(keys, values):
     if type(val) is dict:
-        print(len(val))
-        for addr, func_attrs in val.items():
-            if int(addr) >= 1000:
-                addr_str = addr
-            elif int(addr) >= 100:
-                addr_str = addr + " "
-            elif int(addr) >= 10:
-                addr_str = addr + "  "
-            else:
-                addr_str = addr + "   "
-            print(f"{addr_str}: {func_attrs}")
-    print(f"{key}: {type(val)}")
+        for parsed_data_key, data_val in val.items():
+            if parsed_data_key == ParsedDataKey.VIABLE_SYMBOLS:
+                print(f"{data_val}")
+    print(f"{fname}: {type(val)}")

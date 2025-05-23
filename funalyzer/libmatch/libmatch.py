@@ -1,6 +1,9 @@
-from binaryninja.log import log_error, log_warn, log_info, log_debug
+import binaryninja as bn
+from binaryninja.log import log_debug, log_error, log_warn, log_info
+from binaryninja.enums import LowLevelILOperation
+from binaryninja.plugin import lowlevelil
 from .functiondiff import FunctionDiff
-from ..core.parser import LibDescriptor, UniformedFunction
+from ..core.parser import LibDescriptor, UniformedBasicBlock, UniformedFunction
 from ..core.database import FunalyzerDatabase
 from collections import defaultdict
 from typing import Any, Dict, DefaultDict, List, Set, Tuple
@@ -16,43 +19,62 @@ class LibMatch(object):
         self.binary_desc = binary_desc
         self.fdb = db
         self.ambiguous_funcs = []
+        self._computed = False
         self._first_order_matches: DefaultDict[str, Dict[LibDescriptor, Dict[int, Set]]] = defaultdict()
         self._second_order_matches: DefaultDict[str, Dict[Any, Dict[int, List[Tuple[int, Any]]]]] = defaultdict(dict)
 
-        self._compute()
+    def compute(self) -> None:
+        """
+        Orchestrates the main steps of the library matching process.
+        This function serves as a high-level entry point to trigger the matching pipeline.
+        """
+        log_info("Starting the library matching computation...")
 
-    def match(self, lib_descriptor: LibDescriptor, database: FunalyzerDatabase, score=False):
+        for libname, descriptor in self.fdb.items():
+            self._compute_first_order_matches(libname, descriptor)
+            self._compute_second_order_matches(lib_name=libname)
+            self._compute_third_order()
+            # self._compute_fourth_order()
+
+        # Post-processing and deduplication
+        self._dedup()
+
+        self._computed = True
+
+        log_info("Library matching computation completed.")
+
+    def match(self, score: bool = True) -> Dict[int, str] | None:
+        if not self._computed:
+            self.compute()
+
         candidates: defaultdict = self._candidate_matches
         plain_candidates: defaultdict = self._plain_matches
-        # TODO: This is where we put multi-library heuristics!
 
         candidates = self._smoosh(candidates)
         plain_candidates = self._smoosh(plain_candidates)
         if score:
             log_info("############### UNREFINED MATCHES ###############")
-            self.score_matches(lib_descriptor, plain_candidates, database)
-            input()
+            self.score_matches(self.binary_desc, plain_candidates, self.fdb)
             log_info("############### FINAL MATCHES ###############")
-            self.score_matches(lib_descriptor, candidates, database)
+            self.score_matches(self.binary_desc, candidates, self.fdb)
 
-        out = self._postprocess_matches(lib_descriptor, candidates)
-        return out
+        return self._postprocess_matches(self.binary_desc, candidates)
 
-    def score_matches(self, target_desc: LibDescriptor, matches, lmdb):
+    def score_matches(self, target_desc: LibDescriptor, matches: DefaultDict[Any, Any], fdb: FunalyzerDatabase) -> None:
         precise_matches = 0
         imprecise_matches = 0
         incorrect_matches = 0
         missing = 0
         guesses = 0
-        targ_sym_names = {x.name for x in target_desc.viable_symbols}
-        scorable_syms = targ_sym_names.intersection(lmdb.symbol_names)
+        targ_sym_names = {x.name for x in target_desc.viable_func_addrs}
+        scorable_syms = targ_sym_names.intersection(fdb.symbol_names)
         total_syms = len(scorable_syms)
         ignored = 0
         addrs_to_names = defaultdict(list)
-        for sym in target_desc.viable_symbols:
+        for sym in target_desc.viable_func_addrs:
             addrs_to_names[sym.rebased_addr].append(sym.name)
 
-        for sym in target_desc.viable_symbols:
+        for sym in target_desc.viable_func_addrs:
             if sym.name not in scorable_syms:
                 # Maybe it's some app code we guessed
                 f_addr = sym.rebased_addr
@@ -135,15 +157,6 @@ class LibMatch(object):
         log_info(f"Error rate: {incorrect_matches / total_syms}")
         log_info(f"Collision rate: {imprecise_matches / total_syms:}")
 
-    @classmethod
-    def _first_order_heuristic(cls, lib_attrs, bin_attrs) -> bool:
-        """
-        The heuristic to use to determine whether or not a given tuple of attrs from a lib func
-        should match with a given tuple of attrs from a bin func.
-        """
-        # TODO: perfect matching
-        return lib_attrs == bin_attrs
-
     def _postprocess_matches(self, target_lmd: LibDescriptor, results: dict) -> Dict[int, str]:
         """Clean up the matches for the user.
         This encodes the behavior "we consider it a match if we match with exactly one name".
@@ -163,7 +176,7 @@ class LibMatch(object):
             if len(match_infos) > 1:
                 collisions += 1
                 continue
-            if f_addr not in target_lmd.viable_functions:
+            if f_addr not in target_lmd.viable_func_addrs:
                 # we put a name on it, but it's a stub!
                 junk += 1
                 continue
@@ -188,7 +201,7 @@ class LibMatch(object):
         log_info(f"Matched {len(list(final_matches.keys()))} symbols")
         return final_matches
 
-    def _smoosh(self, candidates):
+    def _smoosh(self, candidates: DefaultDict[int, list]) -> DefaultDict[int, list]:
         for f_addr, stuff in candidates.items():
             if len(stuff) <= 1:
                 continue
@@ -202,61 +215,80 @@ class LibMatch(object):
                 candidates[f_addr] = [stuff[0]]
         return candidates
 
-    def _compute_first_order_matches(self, lib_name: str, lib_descriptors) -> DefaultDict[str, Dict[LibDescriptor, Dict[int, Set]]] | None:
+    def _compute_first_order_matches(
+        self, lib_name: str, lib_descriptor: LibDescriptor
+    ) -> DefaultDict[str, Dict[LibDescriptor, Dict[int, Set]]] | None:
         """
         Find matches between a lib and the target binary based purely on function attribute tuples.
         """
         self._first_order_matches[lib_name] = {}
-        for descriptor in lib_descriptors:
-            self._first_order_matches[lib_name][descriptor] = {}
+        self._first_order_matches[lib_name][lib_descriptor] = {}
+        total_possible_matches = 0
 
-            for faddr in descriptor.viable_functions:
-                # match the lib func against the binary if the first order heuristic passes
-                attrs = descriptor.function_attributes[faddr]
-                results = set()
-                # results = {bin_faddr for bin_faddr, bin_attrs in self.binary_lmd.function_attributes.items()
-                #           if self._first_order_heuristic(attrs, bin_attrs)}
-                for bin_faddr, bin_attrs in self.binary_desc.function_attributes.items():
-                    if faddr == 0x4002BD and bin_faddr == 0x00003D45:
-                        # TODO: Why?
-                        # import ipdb
+        for lib_func_addr in lib_descriptor.viable_func_addrs:
+            attrs = lib_descriptor.function_attributes[lib_func_addr]
+            possible_binary_func_matches: Set[int] = set()
+            for bin_faddr, bin_attrs in self.binary_desc.function_attributes.items():
+                if attrs == bin_attrs:
+                    possible_binary_func_matches.add(bin_faddr)
+            self._first_order_matches[lib_name][lib_descriptor][lib_func_addr] = possible_binary_func_matches
 
-                        # ipdb.set_trace()
-                        pass
-                    if self._first_order_heuristic(attrs, bin_attrs):
-                        results.add(bin_faddr)
-                self._first_order_matches[lib_name][descriptor][faddr] = results
+            total_possible_matches += len(possible_binary_func_matches)
+        log_debug(f"Done with first order, found {total_possible_matches} possible matches")
 
-    @classmethod
-    def _second_order_heuristic(cls, binary_lmd, lib_lmd, binary_faddr, lib_faddr):
+    def _second_order_heuristic(
+        self, binary_desc: LibDescriptor, lib_desc: LibDescriptor, binary_faddr: int, lib_faddr: int
+    ) -> FunctionDiff:
         """
         The heuristic to use to determine whether or not two functions are approximately the same
         based on the FunctionDiff implementation.
         """
-        lib_func = lib_lmd.normalized_functions[lib_faddr]
-        bin_func = binary_lmd.normalized_functions[binary_faddr]
+        bin_func = binary_desc.uniformed_functions[binary_faddr]
+        lib_func = lib_desc.uniformed_functions[lib_faddr]
         # TODO: perfect matching
-        return FunctionDiff(binary_lmd, lib_lmd, bin_func, lib_func)
+        return FunctionDiff(binary_desc, lib_desc, bin_func, lib_func)
 
-    def _compute_second_order_matches(self, lib_name):
+    def normalize_il(self, instr: lowlevelil.LowLevelILInstruction) -> LowLevelILOperation | None:
+        """Normalize IL by removing pointers, relocations, and unresolved targets"""
+        if instr.operation in [LowLevelILOperation.LLIL_CONST_PTR, LowLevelILOperation.LLIL_CONST]:
+            # Check if constant is a relocation target
+            if instr.function.view and instr.function.view.relocation_ranges_at(instr.value.value):
+                return None
+            return LowLevelILOperation.LLIL_CONST
+
+        # Handle calls and jumps
+        if instr.operation in [LowLevelILOperation.LLIL_CALL, LowLevelILOperation.LLIL_JUMP]:
+            # Check if target is resolvable
+            if not instr.dest.is_constant:
+                return None
+
+        return instr.operation
+
+    def get_block_signature(self, block: UniformedBasicBlock):
+        """Create normalized signature for basic block"""
+        sig = []
+        for instr in block:
+            normalized = normalize_il(instr)
+            if normalized is not None:
+                sig.append(normalized)
+        return tuple(sig)
+
+    def _compute_second_order_matches(self, lib_name) -> None:
         """
         Refine matches between a lib and the target binary based purely on the FunctionDiff method.
         """
         self._second_order_matches[lib_name] = {}
-        for lmd, lmd_matches in self._first_order_matches[lib_name].items():
-            self._second_order_matches[lib_name][lmd] = {}
-            for faddr, func_matches in lmd_matches.items():
-                self._second_order_matches[lib_name][lmd][faddr] = []
+        for lib_desc, matches in self._first_order_matches[lib_name].items():
+            self._second_order_matches[lib_name][lib_desc] = {}
+            for lib_faddr, func_matches in matches.items():
+                self._second_order_matches[lib_name][lib_desc][lib_faddr] = []
                 for maddr in func_matches:
-                    fd = self._second_order_heuristic(self.binary_desc, lmd, maddr, faddr)
-                    if fd.function_a.name == "tcp_recved" and fd.function_b.name == "tcp_recved":
-                        # TODO: Why?
-                        # import ipdb
-
-                        # ipdb.set_trace()
-                        pass
-                    if fd.probably_identical:
-                        self._second_order_matches[lib_name][lmd][faddr].append((maddr, fd))
+                    if maddr not in self.binary_desc.uniformed_functions:
+                        continue
+                    log_info("finally not")
+                    fdiff = self._second_order_heuristic(self.binary_desc, lib_desc, maddr, lib_faddr)
+                    if fdiff.probably_identical:
+                        self._second_order_matches[lib_name][lib_desc][lib_faddr].append((maddr, lib_desc))
 
     def _postprocess_second_order_matches(self) -> DefaultDict[int, list]:
         # Gather the matches based on the functions in the original binary:
@@ -282,14 +314,14 @@ class LibMatch(object):
                                 matches[target_addr].append((lib_name, obj_lmd, match_info))
         return matches
 
-    def _compute_third_order(self):
+    def _compute_third_order(self) -> None:
         self._plain_matches = self._postprocess_second_order_matches()
         self._candidate_matches = self._postprocess_second_order_matches()
         for f_addr, matches in self._candidate_matches.items():
             if matches:
                 self._narrow_third_order(f_addr, matches)
 
-    def _compute_fourth_order(self):
+    def _compute_fourth_order(self) -> None:
         self.recursion_list = []
         good_hits = []
         for f_addr, matches in self._candidate_matches.items():
@@ -332,292 +364,255 @@ class LibMatch(object):
 
     recursion_list = []
 
-    def _narrow_third_order(self, f_addr, matches, exact_narrowing=False):
-        # TODO: FIXME:
-        # It's possible that you get a single match, and this match is good, but it's wrong, due to function call targets.
-        # Maybe we should check everything, even if it has more than one match.
-        # No match is better than one wrong one!
+    def _narrow_third_order(
+        self, f_addr: int, matches: List[Tuple[str, LibDescriptor, FunctionDiff | str]], exact_narrowing=False
+    ):
+        """
+        Refine candidate matches for a function based on its call graph context.
+
+        Args:
+            f_addr (int): Address of the function in the target binary.
+            matches (list): Candidate matches for this function, each a tuple (lib_name, lib_descriptor, FunctionDiff or str).
+            exact_narrowing (bool): If True, use stricter narrowing criteria.
+
+        This method attempts to disambiguate matches by comparing callees of the candidate functions.
+        """
         if f_addr in self.recursion_list:
-            log_warn("Oof, recursion to %#08x!" % f_addr)
+            log_warn(f"Warning: recursion to {f_addr:x}!")
             return
         self.recursion_list.append(f_addr)
+
         if len(matches) == 1:
-            # Perfect match! cannot refine
+            # Perfect match, nothing to refine
             self.recursion_list.remove(f_addr)
             return
-        log_info("Analyzing function %#08x" % f_addr)
-        # Get the target for each candidate match
-        target_func = list(matches)[0][2].function_a
+
+        log_info(f"Analyzing function {f_addr:x}")
+
+        # Get the target function object from the first match's FunctionDiff (or string)
+        first_match = matches[0]
+        fd_or_name = first_match[2]
+        if isinstance(fd_or_name, str):
+            log_warn(f"Function {f_addr:x} has only guessed matches, cannot refine by call context.")
+            self.recursion_list.remove(f_addr)
+            return
+        target_func = fd_or_name.function_a  # Binary Ninja Function object in target binary
+
+        # Collect callees from the target function
         target_callees = []
-        for _, callees in target_func.call_sites.items():  # from_block, callees
-            for callee in callees:
-                if not self.binary_desc.loader.main_object.contains_addr(callee):
-                    # A jumpout! Fuck.
+        for call_site in target_func.call_sites:
+            # call_site is a tuple (address, list of callees)
+            _, callees = call_site
+            callees_set = set()
+            for callee_addr in callees:
+                if not self.binary_desc.bv.is_valid_offset(callee_addr):
+                    # Address outside the binary view
                     callee_name = "UnresolvableCallTarget"
-                    target_callees.append(
-                        {
-                            (
-                                callee,
-                                callee_name,
-                            )
-                        }
-                    )
-                elif callee in self.binary_desc.banned_addrs:
+                    callees_set.add((callee_addr, callee_name))
+                elif callee_addr in self.binary_desc.banned_addrs:
                     callee_name = "Ignored"
-                    target_callees.append(
-                        {
-                            (
-                                callee,
-                                callee_name,
-                            )
-                        }
-                    )
-                elif callee not in self._candidate_matches or len(self._candidate_matches[callee]) == 0:
-                    log_error("Cannot disambiguate function at %#08x, unmatched call to %#08x" % (f_addr, callee))
+                    callees_set.add((callee_addr, callee_name))
+                elif callee_addr not in self._candidate_matches or len(self._candidate_matches[callee_addr]) == 0:
+                    log_error(f"Cannot disambiguate function at {f_addr:x}, unmatched call to {callee_addr:x}")
                     self.ambiguous_funcs.append(f_addr)
                     self.recursion_list.remove(f_addr)
-                    return  # We're fucked
-                else:
-                    callee_matches = self._candidate_matches[callee]
-                    if len(callee_matches) > 1:
-                        if callee == f_addr:
-                            log_warn("Recursion is bad!")
-                            continue
-                        log_error("Recursively resolving %#08x" % callee)
-                        self._narrow_third_order(callee, callee_matches)
-                        self.squish(callee)
-
-                        if exact_narrowing and len(self._candidate_matches[callee]) > 1:
-                            log_error("Failed to narrow down call to %#08x" % callee)
-                            self.ambiguous_funcs.append(f_addr)
-                            self.recursion_list.remove(f_addr)
-                            return
-                    possible_callees = set()
-                    for cm in callee_matches:
-                        _, m_lmd, m_fd = cm  # m_lib, m_lmd, m_fd
-                        callee_sym = m_lmd.symbol_for_addr(m_fd.function_b.addr)
-                        if not callee_sym:
-                            continue
-                        callee_name = callee_sym.name
-                        possible_callees.add(
-                            (
-                                callee,
-                                callee_name,
-                            )
-                        )
-                    target_callees.append(possible_callees)
-        if not target_callees:
-            log_error("No calls in function %#08x, cannot disambiguate" % f_addr)
-            self.ambiguous_funcs.append(f_addr)
-            return
-        # For each possible match
-        self._candidate_matches[f_addr] = []
-        log_debug("Resolving Function %#08x" % f_addr)
-        for lib_name, match_lmd, match_diff in matches:
-            match_name = match_diff.function_b.name
-            # Get the addresses of each function that library calls.
-            lib_callees = []
-            for lol in match_diff.function_b.call_sites.values():
-                for lmao in lol:
-                    lib_callees.append(lmao)
-            # Here, we try to compare the functions we matched via direct block comparison with libraries, based on what we think
-            # the target actually called.
-            # However, we may not be able to accurately resolve the target's callees, so we check that, for each candidate
-            # library function, its exact callees are in the set of potential callees in the target.
-            # If not, we rule it out.
-            for possible_targ_callees, lib_callee in zip(target_callees, lib_callees):
-                if not possible_targ_callees:
-                    continue
-                try:
-                    targ_callee_addr = list(possible_targ_callees)[0][0]
-                    lib_callee_name = match_lmd.symbol_for_addr(lib_callee).name
-                except Exception as e:
-                    log_error(f"Hmm, something is wrong %#08x %#08x %s\n{e}" % (f_addr, lib_callee, match_lmd.filename))
                     return
-                for targ_callee in possible_targ_callees:
-                    targ_callee_addr, targ_callee_name = targ_callee
-                    if targ_callee_name == "Ignored":
-                        log_debug("Ignoring unresolvable call to %#08x" % targ_callee_addr)
-                        break
-                    if targ_callee_name == lib_callee_name:
-                        log_debug("\t\tMatched call to %s" % targ_callee_name)
-                        break
                 else:
-                    log_debug("\tRuling out %s due to mismatched call to %#08x" % (lib_callee_name, targ_callee_addr))
+                    # Collect all possible callee names from candidate matches
+                    callee_names = set()
+                    for _, _, callee_fd_or_name in self._candidate_matches[callee_addr]:
+                        if isinstance(callee_fd_or_name, str):
+                            callee_names.add((callee_addr, callee_fd_or_name))
+                        else:
+                            callee_names.add((callee_addr, callee_fd_or_name.function_b.name))
+                    callees_set.update(callee_names)
+            target_callees.append(callees_set)
+
+        # Now, for each candidate match, check if callees are compatible
+        narrowed_matches = []
+        for lib_name, lib_lmd, fd_or_name in matches:
+            if isinstance(fd_or_name, str):
+                # Guessed name, keep only if exact narrowing is off
+                if not exact_narrowing:
+                    narrowed_matches.append((lib_name, lib_lmd, fd_or_name))
+                continue
+
+            lib_func = fd_or_name.function_b  # Function in library
+            lib_callees = []
+            for call_site in lib_func.call_sites:
+                _, callees = call_site
+                callees_set = set()
+                for callee_addr in callees:
+                    if not lib_lmd.bv.is_valid_offset(callee_addr):
+                        callee_name = "UnresolvableCallTarget"
+                        callees_set.add((callee_addr, callee_name))
+                    elif callee_addr in lib_lmd.banned_addrs:
+                        callee_name = "Ignored"
+                        callees_set.add((callee_addr, callee_name))
+                    else:
+                        callee_func = lib_lmd.bv.get_function_at(callee_addr)
+                        if callee_func is None:
+                            callee_name = "Unknown"
+                        else:
+                            callee_name = callee_func.name
+                        callees_set.add((callee_addr, callee_name))
+                lib_callees.append(callees_set)
+
+            # Compare callees sets between target and lib function
+            if len(target_callees) != len(lib_callees):
+                # Different number of call sites, discard if exact narrowing
+                if exact_narrowing:
+                    continue
+                else:
+                    narrowed_matches.append((lib_name, lib_lmd, fd_or_name))
+                    continue
+
+            # Check if all callees sets intersect non-empty
+            compatible = True
+            for t_callees, l_callees in zip(target_callees, lib_callees):
+                if t_callees.isdisjoint(l_callees):
+                    compatible = False
                     break
-            else:
-                self._candidate_matches[f_addr].append((lib_name, match_lmd, match_diff))
-                log_error("Resolved call to %#08x to %s via callgraph" % (f_addr, match_name))
+
+            if compatible:
+                narrowed_matches.append((lib_name, lib_lmd, fd_or_name))
+
+        if len(narrowed_matches) < len(matches):
+            log_info(f"Narrowed matches for function {f_addr:#08x} from {len(matches)} to {len(narrowed_matches)}")
+            self._candidate_matches[f_addr] = narrowed_matches
+            # Recursively narrow callees
+            for _, _, fd_or_name in narrowed_matches:
+                if isinstance(fd_or_name, str):
+                    continue
+                for call_site in fd_or_name.function_a.call_sites:
+                    _, callees = call_site
+                    for callee_addr in callees:
+                        if callee_addr in self._candidate_matches:
+                            self._narrow_third_order(callee_addr, self._candidate_matches[callee_addr])
+        else:
+            log_info(f"No narrowing possible for function {f_addr:#08x}")
+
         self.recursion_list.remove(f_addr)
 
     def _narrow_fourth_order(self, f_addr, matches):
         """
-        By now, we've probably matched a bunch of functions.  But we can't get them all.
-        This will use those functions we could match to find the ones we can't.
-        In contrast to the third phase, which uses callees to find callers, this does the opposite.
-        For each function we can precisely match, collect the set of callees, and assign names to them based on the
-        symbols in the source library.
+        Further refine candidate matches for a function using advanced heuristics,
+        such as analyzing recursion patterns or call graph consistency.
 
-        :param f_addr:
-        :param matches:
-        :return:
+        Args:
+            f_addr (int): Address of the function in the target binary.
+            matches (list): Candidate matches for this function, each a tuple (lib_name, lib_descriptor, FunctionDiff or str).
+
+        This method attempts to disambiguate matches by analyzing recursive calls,
+        and possibly other heuristics beyond call graph similarity.
         """
-        if f_addr in self.recursion_list:
-            log_warn("Oof, recursion to %#08x!" % f_addr)
+
+        if len(matches) <= 1:
+            # Nothing to refine if zero or one candidate
             return
-        self.recursion_list.append(f_addr)
-        if len(matches) != 1:
-            self.recursion_list.remove(f_addr)
+
+        log_info(f"Fourth order narrowing on function {f_addr:#08x} with {len(matches)} candidates")
+
+        # Extract the target function (Binary Ninja Function) from the first candidate
+        first_match = matches[0]
+        fd_or_name = first_match[2]
+        if isinstance(fd_or_name, str):
+            # If only guessed names, no further refinement possible
+            log_warn(f"Function {f_addr:#08x} has only guessed matches, skipping fourth order narrowing")
             return
-        m_lib, m_lmd, m_fd = matches[0]
-        if isinstance(m_fd, str):
-            # We've already been here
-            self.recursion_list.remove(f_addr)
-            return
-        target_func = m_fd.function_a
-        lib_func = m_fd.function_b
-        for (_, targ_callees), (_, lib_callees) in zip(  # (targ_block, targ_callees), (lib_block, lib_callees)
-            target_func.call_sites.items(), lib_func.call_sites.items()
-        ):
-            for targ_callee, lib_callee in zip(targ_callees, lib_callees):
-                if not self.binary_desc.loader.main_object.contains_addr(targ_callee):
-                    # A jumpout! Fuck.
-                    continue
-                elif targ_callee in self.binary_desc.banned_addrs:
-                    # Junk.
-                    continue
-                elif targ_callee not in self._candidate_matches or len(self._candidate_matches[targ_callee]) == 0:
-                    # Take a wild guess based on context
-                    # Assuming the current match is correct, figure out what it would call in the original
-                    # library and make that the name to match.
-                    guessed_sym = m_lmd.symbol_for_addr(lib_callee)
-                    if guessed_sym is None:
-                        log_info(
-                            "No findable name for call to %#08x from %#08x(%s)"
-                            % (targ_callee, target_func.addr, lib_func.name)
-                        )
-                    else:
-                        guessed_name = guessed_sym.name
-                        log_info(
-                            "Guessing name of %#08x is %s due to call from %#08x(%s)"
-                            % (targ_callee, guessed_name, target_func.addr, lib_func.name)
-                        )
-                        self._candidate_matches[targ_callee] = [(m_lib, m_lmd, guessed_name)]
-                elif len(self._candidate_matches[targ_callee]) == 1:
-                    guessed_sym = m_lmd.symbol_for_addr(lib_callee)
-                    if guessed_sym is None:
-                        log_info(
-                            "No findable name for call to %#08x from %#08x(%s)"
-                            % (targ_callee, target_func.addr, lib_func.name)
-                        )
-                    else:
-                        guessed_name = guessed_sym.name
-                        _, _, fd = self._candidate_matches[targ_callee][0]  # lol, blah, fd
-                        if isinstance(fd, str):
-                            if fd == guessed_name:
-                                continue
-                        else:
-                            if fd.function_b.name == guessed_name:
-                                continue
-                        log_info(
-                            "Guessing name of %#08x is %s due to call from %#08x(%s)"
-                            % (targ_callee, guessed_name, target_func.addr, lib_func.name)
-                        )
-                        self._candidate_matches[targ_callee] = [(m_lib, m_lmd, guessed_name)]
-                    # Nothing to do
-                    continue
-                else:
-                    # We have a collision.  Resolve it by picking the one with the matching
-                    # name based on the lib's symbols
-                    guessed_sym = m_lmd.symbol_for_addr(lib_callee)
-                    if not guessed_sym:
-                        log_warn(
-                            "Couldn't figure out what %#08x is, called by func %#08x" % (lib_callee, lib_func.addr)
-                        )
-                        continue
-                    guessed_name = guessed_sym.name
-                    new_matches = []
-                    for match in self._candidate_matches[targ_callee]:
-                        c_lib, c_lmd, c_fd = match
-                        if c_fd.function_b.name == guessed_name:
-                            log_info(
-                                "Resolving %#08x to %s via call from %#08x(%s)"
-                                % (targ_callee, guessed_name, target_func.addr, lib_func.name)
-                            )
-                            new_matches.append(
-                                (
-                                    c_lib,
-                                    c_lmd,
-                                    c_fd,
-                                )
-                            )
-                    self._candidate_matches[targ_callee] = new_matches
-                    if not new_matches:
-                        # Welp, it really wasn't the other ones.
-                        # Try something new instead
-                        guessed_sym = m_lmd.symbol_for_addr(lib_callee)
-                        if guessed_sym is None:
-                            log_info(
-                                "No findable name for call to %#08x from %#08x(%s)"
-                                % (targ_callee, target_func.addr, lib_func.name)
-                            )
-                        else:
-                            guessed_name = guessed_sym.name
-                            log_info(
-                                "Guessing name of %#08x is %s due to call from %#08x(%s)"
-                                % (targ_callee, guessed_name, target_func.addr, lib_func.name)
-                            )
-                            self._candidate_matches[targ_callee] = [(m_lib, m_lmd, guessed_name)]
-                    self.squish(targ_callee)
-                    if len(self._candidate_matches[targ_callee]) == 1:
-                        # Recurse, see if that helps any.
-                        log_info("Recursively resolving %#08x" % targ_callee)
-                        self._narrow_fourth_order(targ_callee, self._candidate_matches[targ_callee])
-        self.recursion_list.remove(f_addr)
+
+        target_func = fd_or_name.function_a  # Binary Ninja Function object in target binary
+
+        # Check if the function is recursive in the target binary
+        is_target_recursive = self._is_function_recursive(target_func)
+
+        # Prepare a list to hold refined matches
+        refined_matches = []
+
+        for lib_name, lib_lmd, fd_or_name in matches:
+            if isinstance(fd_or_name, str):
+                # Keep guessed names only if no exact narrowing requested
+                refined_matches.append((lib_name, lib_lmd, fd_or_name))
+                continue
+
+            lib_func = fd_or_name.function_b  # Binary Ninja Function object in library
+
+            # Check if the candidate function is recursive
+            is_lib_recursive = self._is_function_recursive(lib_func)
+
+            # If recursion property mismatches, discard this candidate
+            if is_target_recursive != is_lib_recursive:
+                log_info(f"Discarding candidate {lib_func.name} for function {f_addr:#08x} due to recursion mismatch")
+                continue
+
+            # Additional heuristics can be added here, e.g., comparing loop structures,
+            # instruction counts, or other function metrics.
+
+            # If passed all heuristics, keep the candidate
+            refined_matches.append((lib_name, lib_lmd, fd_or_name))
+
+        if len(refined_matches) < len(matches):
+            log_info(
+                f"Fourth order narrowing reduced candidates for function {f_addr:#08x} from {len(matches)} to {len(refined_matches)}"
+            )
+            self._candidate_matches[f_addr] = refined_matches
+        else:
+            log_info(f"Fourth order narrowing could not reduce candidates for function {f_addr:#08x}")
+
+    def _is_function_recursive(self, func):
+        """
+        Checks if a Binary Ninja function is directly recursive (calls itself).
+        Args:
+            func (binaryninja.Function): The function to check.
+        Returns:
+            bool: True if the function calls itself directly.
+        """
+        for ref in func.call_sites:
+            # ref is a ReferenceSource object
+            # Depending on BN version, ref.address, ref.target_address or ref.to must be used
+            # The most reliable is ref.address (the call instruction) and ref.target (target address)
+
+            callee_addr = None
+            if hasattr(ref, "target"):
+                callee_addr = ref.target
+            elif hasattr(ref, "target_address"):
+                callee_addr = ref.target_address
+            elif hasattr(ref, "to"):
+                callee_addr = ref.to
+            else:
+                # Fallback
+                # TODO: try to get the called function from the instruction
+                # This is more complicated; for now, skip
+                continue
+
+            if callee_addr == func.start:
+                return True
+
+        return False
 
     def _dedup(self):
         """
-        During all the previous phases, we'll make guesses, and all sorts of cool stuff.
-        Now we have a bit of cleanup to do.  If we guessed a name for a function x, and a collision for
-        function y includes the name of x, take it out of y's list, as we assume we can only have one copy of x in the binary
-        THis means, by process of elimination, we may get even more matches!
-        :return:
+        Deduplicates candidate matches by resolving collisions and keeping only the best matches.
         """
-        import copy
+        log_info("Starting deduplication of candidate matches...")
+        # Iterate through candidate matches and resolve collisions
+        for f_addr in list(self._candidate_matches.keys()):  # Use list() to avoid modifying dict while iterating
+            matches = self._candidate_matches[f_addr]
 
-        good_hits = []
-        for f_addr, matches in self._candidate_matches.items():
+            if not matches:
+                continue  # Skip if no matches
+
             if len(matches) == 1:
-                _, _, m_fd = matches[0]  # m_lib, m_lmd, m_fd
-                if isinstance(m_fd, str):
-                    # A guess has no fd
-                    good_hits.append(m_fd)
-                else:
-                    good_hits.append(m_fd.function_b.name)
-        for f_addr, matches in self._candidate_matches.items():
-            if len(matches) > 1:
-                fixed_matches = copy.copy(matches)
-                for match in matches:
-                    _, _, m_fd = match  # m_lib, m_lmd, m_fd
-                    if m_fd.function_b.name in good_hits:
-                        log_info("Removing %s from consideration for %#08x" % (m_fd.function_b.name, f_addr))
-                        fixed_matches.remove(match)
-                self._candidate_matches[f_addr] = fixed_matches
+                continue  # Skip if only one match
 
-    def _compute(self):
-        """
-        Compute everything, hopefully resulting in matches!
-        """
-        # first, find all first order matches (matches depending only on the attr tuples)
-        log_info("Phase 1: Coarse statistical matching")
-        for lib, lib_lmds in self.fdb.lib_descriptors.items():
-            self._compute_first_order_matches(lib, lib_lmds)
-        log_info("Phase 2: FunctionDiff")
-        for lib in self.fdb.lib_descriptors:
-            self._compute_second_order_matches(lib)
-        log_info("Phase 3: Callee context")
-        self._compute_third_order()
-        log_info("Phase 4: Caller context")
-        self._compute_fourth_order()
-        log_info("Phase 5: Cleanup")
-        self._dedup()
+            # Implement your collision resolution logic here
+            # Example: Keep only the match with the highest similarity score
+            best_match = max(
+                matches, key=lambda match: match[2].similarity_score if hasattr(match[2], "similarity_score") else 0
+            )
+            self._candidate_matches[f_addr] = [best_match]  # Keep only the best match
+            log_info(
+                f"Deduplicated function {f_addr:#08x}, keeping best match '{best_match[2].function_b.name if hasattr(best_match[2], 'function_b') else best_match[2]}'"
+            )
+
+        log_info("Deduplication of candidate matches completed.")

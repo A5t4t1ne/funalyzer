@@ -1,4 +1,4 @@
-from binaryninja import log_warn, log_debug
+from binaryninja.log import log_warn, log_debug
 import pickle
 
 

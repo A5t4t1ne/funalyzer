@@ -1,13 +1,11 @@
-# import networkx
-import logging
+from ctypes import ArgumentError
 import types
 import math
 from collections import deque
-from typing import Any, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
+from binaryninja.log import log_debug, log_error
 
-
-l = logging.getLogger("bdsig.functiondiff")
-l.setLevel("INFO")
+from funalyzer.core.parser import LibDescriptor, UniformedBasicBlock, UniformedFunction
 
 
 DIFF_TYPE = "type"
@@ -17,6 +15,7 @@ DIFF_VALUE = "value"
 # exception for trying find basic block changes
 class UnmatchedStatementsException(Exception):
     pass
+
 
 # statement difference classes
 class Difference(object):
@@ -32,6 +31,7 @@ class ConstantChange(object):
         self.value_a = value_a
         self.value_b = value_b
 
+
 # helper methods
 def _euclidean_dist(vector_a, vector_b):
     """
@@ -40,8 +40,8 @@ def _euclidean_dist(vector_a, vector_b):
     :returns:           The euclidean distance between the two vectors.
     """
     dist = 0
-    for (x, y) in zip(vector_a, vector_b):
-        dist += (x-y)*(x-y)
+    for x, y in zip(vector_a, vector_b):
+        dist += (x - y) * (x - y)
     return math.sqrt(dist)
 
 
@@ -56,7 +56,7 @@ def _get_closest_matches(input_attributes, target_attributes):
 
     # for each object in the first set find the objects with the closest target attributes
     for a in input_attributes:
-        best_dist = float('inf')
+        best_dist = float("inf")
         best_matches = []
         for b in target_attributes:
             dist = _euclidean_dist(input_attributes[a], target_attributes[b])
@@ -86,9 +86,7 @@ def _levenshtein_distance(s1, s2):
             if num1 == num2:
                 new_distances.append(distances[index1])
             else:
-                new_distances.append(1 + min((distances[index1],
-                                             distances[index1+1],
-                                             new_distances[-1])))
+                new_distances.append(1 + min((distances[index1], distances[index1 + 1], new_distances[-1])))
         distances = new_distances
     return distances[-1]
 
@@ -113,9 +111,7 @@ def _normalized_levenshtein_distance(s1, s2, acceptable_differences):
             if num2 - num1 in acceptable_differences:
                 new_distances.append(distances[index1])
             else:
-                new_distances.append(1 + min((distances[index1],
-                                             distances[index1+1],
-                                             new_distances[-1])))
+                new_distances.append(1 + min((distances[index1], distances[index1 + 1], new_distances[-1])))
         distances = new_distances
     return distances[-1]
 
@@ -188,8 +184,10 @@ def differing_constants(block_a, block_b):
 
 
 # TODO: cleanup / uniform these fucked up types
-def compare_statement_dict(statement_1: Tuple[tuple, list] | Tuple[int, bytes, float, str] | List[Any] | float | str | bytes |  None, statement_2) -> List[Difference] | Difference:
-
+def compare_statement_dict(
+    statement_1: Tuple[tuple, list] | Tuple[int, bytes, float, str] | List[Any] | float | str | bytes | None,
+    statement_2,
+) -> List[Difference] | Difference:
     # should return whether or not the statement's type/effects changed
     # need to return the specific number that changed too
 
@@ -246,19 +244,22 @@ def compare_statement_dict(statement_1: Tuple[tuple, list] | Tuple[int, bytes, f
     return differences
 
 
-class FunctionDiff():
+class FunctionDiff:
     """
-    This class computes the a diff between two functions.
+    This class computes the diff between two functions.
     """
-    def __init__(self, lmd_a, lmd_b, function_a, function_b):
+
+    def __init__(
+        self, desc_a: LibDescriptor, desc_b: LibDescriptor, function_a: UniformedFunction, function_b: UniformedFunction
+    ):
         """
         :param lmd_a: The first LMD (owns function_a)
         :param lmd_b: The second LMD (owns function_b)
         :param function_a: The first NormalizedFunction object
         :param function_b: The second NormalizedFunction object
         """
-        self.lmd_a = lmd_a
-        self.lmd_b = lmd_b
+        self.lmd_a = desc_a
+        self.lmd_b = desc_b
         self.function_a = function_a
         self.function_b = function_b
 
@@ -278,7 +279,7 @@ class FunctionDiff():
         """
         if len(self._unmatched_blocks_from_a | self._unmatched_blocks_from_b) > 0:
             return False
-        for (a, b) in self._block_matches:
+        for a, b in self._block_matches:
             if not self.blocks_probably_identical(a, b, check_constants=True):
                 return False
         return True
@@ -301,7 +302,7 @@ class FunctionDiff():
         :returns: A list of block matches which appear to be identical
         """
         identical_blocks = []
-        for (block_a, block_b) in self._block_matches:
+        for block_a, block_b in self._block_matches:
             if self.blocks_probably_identical(block_a, block_b):
                 identical_blocks.append((block_a, block_b))
         return identical_blocks
@@ -312,7 +313,7 @@ class FunctionDiff():
         :returns: A list of block matches which appear to differ
         """
         differing_blocks = []
-        for (block_a, block_b) in self._block_matches:
+        for block_a, block_b in self._block_matches:
             if not self.blocks_probably_identical(block_a, block_b):
                 differing_blocks.append((block_a, block_b))
         return differing_blocks
@@ -324,9 +325,10 @@ class FunctionDiff():
         """
         differing_blocks = []
         diffs = dict()
-        for (block_a, block_b) in self._block_matches:
-            if self.blocks_probably_identical(block_a, block_b) and \
-                    not self.blocks_probably_identical(block_a, block_b, check_constants=True):
+        for block_a, block_b in self._block_matches:
+            if self.blocks_probably_identical(block_a, block_b) and not self.blocks_probably_identical(
+                block_a, block_b, check_constants=True
+            ):
                 differing_blocks.append((block_a, block_b))
         for block_a, block_b in differing_blocks:
             ba = self.lmd_a.normalized_blocks[(self.function_a.addr, block_a.addr)]
@@ -370,7 +372,11 @@ class FunctionDiff():
         tags_a = [s.tag for s in block_a.statements]
         tags_b = [s.tag for s in block_b.statements]
         consts_a = [c.value for c in block_a.all_constants if not self.lmd_a.loader.main_object.contains_addr(c.value)]
-        consts_b = [c.value for c in block_b.all_constants if not (self.lmd_b.loader.min_addr <= c.value < self.lmd_b.loader.max_addr)]
+        consts_b = [
+            c.value
+            for c in block_b.all_constants
+            if not (self.lmd_b.loader.min_addr <= c.value < self.lmd_b.loader.max_addr)
+        ]
         all_registers_a = [s.offset for s in block_a.statements if hasattr(s, "offset")]
         all_registers_b = [s.offset for s in block_b.statements if hasattr(s, "offset")]
         jumpkind_a = block_a.jumpkind
@@ -393,7 +399,7 @@ class FunctionDiff():
 
         return similarity
 
-    def blocks_probably_identical(self, block_a, block_b, check_constants=False):
+    def blocks_probably_identical(self, block_a, block_b, check_constants=False) -> bool:
         """
         :param block_a:         The first block address.
         :param block_b:         The second block address.
@@ -435,8 +441,9 @@ class FunctionDiff():
                 continue
             # if both are in the binary we'll assume it's okay, although we should really match globals
             # TODO use global matches
-            if self.lmd_a.loader.main_object.contains_addr(c.value_a) and \
-                    self.lmd_b.loader.main_object.contains_addr(c.value_b):
+            if self.lmd_a.loader.main_object.contains_addr(c.value_a) and self.lmd_b.loader.main_object.contains_addr(
+                c.value_b
+            ):
                 continue
             # if the difference is equal to the difference in block addr's or successor addr's we'll say it's also okay
             if c.value_b - c.value_a in acceptable_differences:
@@ -455,9 +462,9 @@ class FunctionDiff():
         return diff_constants
 
     @staticmethod
-    def _compute_block_attributes(function):
+    def _compute_block_attributes(function: UniformedFunction) -> Dict[int, Tuple[int, int, int]]:
         """
-        :param function:    A normalized function object.
+        :param function:    A uniformed function object.
         :returns:           A dictionary of basic block addresses to tuples of attributes.
         """
         # The attributes we use are the distance form function start, distance from function exit and whether
@@ -481,18 +488,28 @@ class FunctionDiff():
         return attributes
 
     @staticmethod
-    def _distances_from_function_start(function):
+    def _distances_from_function_start(function: UniformedFunction):
         """
         :param function:    A normalized Function object.
         :returns:           A dictionary of basic block addresses and their distance to the start of the function.
         """
-        return None
-        # return networkx.single_source_shortest_path_length(function.graph, function.startpoint)
+        first_bb_addr = min(function.basic_blocks)
+        entry = function.basic_blocks[first_bb_addr]  # Usually the entry block, but you may want to check by address
+        distances = {entry.start: 0}
+        queue = deque([entry])
+        while queue:
+            block = queue.popleft()
+            for edge in block.outgoing_edges:
+                target = edge.target
+                if target.start not in distances:
+                    distances[target.start] = distances[block.start] + 1
+                    queue.append(target)
+        return distances
 
     @staticmethod
-    def _distances_from_function_exit(function):
+    def _distances_from_function_exit(function: UniformedFunction):
         """
-        :param function:    A normalized Function object.
+        :param function:    A uniformed Function object.
         :returns:           A dictionary of basic block addresses and their distance to the exit of the function.
         """
         reverse_graph = function.graph.reverse()
@@ -507,7 +524,7 @@ class FunctionDiff():
         # if there were no exits (a function with a while 1) let's consider the block with the highest address to
         # be the exit. This isn't the most scientific way, but since this case is pretty rare it should be okay
         if not found_exits:
-            last = max(function.graph.nodes(), key=lambda x:x.addr)
+            last = max(function.graph.nodes(), key=lambda x: x.addr)
             reverse_graph.add_edge("start", last)
 
         # TODO medium: replace networkx
@@ -528,14 +545,20 @@ class FunctionDiff():
         Computes the diff of the functions and saves the result.
         """
         # get the attributes for all blocks
-        l.debug("Computing diff of functions: %s, %s",
-                ("%#x" % self.function_a.startpoint.addr) if self.function_a.startpoint is not None else "None",
-                ("%#x" % self.function_b.startpoint.addr) if self.function_b.startpoint is not None else "None"
-                )
+        # log_debug(
+        #     "Computing diff of functions: %s, %s",
+        #     ("%#x" % self.function_a.startpoint.addr) if self.function_a.startpoint is not None else "None",
+        #     ("%#x" % self.function_b.startpoint.addr) if self.function_b.startpoint is not None else "None",
+        # )
+
+        if not self.function_a.graph or not self.function_b.graph:
+            log_error("function graphs not valid")
+            raise ArgumentError("function graphs not valid")
 
         # get the initial matches
-        initial_matches = self._get_block_matches(self.attributes_a, self.attributes_b,
-                                                  tiebreak_with_block_similarity=False)
+        initial_matches = self._get_block_matches(
+            self.attributes_a, self.attributes_b, tiebreak_with_block_similarity=False
+        )
 
         # Use a queue so we process matches in the order that they are found
         to_process = deque(initial_matches)
@@ -546,49 +569,60 @@ class FunctionDiff():
         # Keep a dict of current matches, which will be updated if better matches are found
         matched_a = dict()
         matched_b = dict()
-        for (x, y) in processed_matches:
+        for x, y in processed_matches:
             matched_a[x] = y
             matched_b[y] = x
 
         # while queue is not empty
         while to_process:
             (block_a, block_b) = to_process.pop()
-            l.debug("FunctionDiff: Processing (%#x, %#x)", block_a.addr, block_b.addr)
+            log_debug(f"FunctionDiff: Processing ({block_a.addr:x}, {block_b.addr:x})")
 
             # we could find new matches in the successors or predecessors of functions
-            block_a_succ = list(self.function_a.graph.successors(block_a))
-            block_b_succ = list(self.function_b.graph.successors(block_b))
-            block_a_pred = list(self.function_a.graph.predecessors(block_a))
-            block_b_pred = list(self.function_b.graph.predecessors(block_b))
+            # TODO: this was temporarily removed for testing purposes
+            block_a_succ = [] # list(self.function_a.graph.successors(block_a))
+            block_b_succ = [] # list(self.function_b.graph.successors(block_b))
+            block_a_pred = [] # list(self.function_a.graph.predecessors(block_a))
+            block_b_pred = [] # list(self.function_b.graph.predecessors(block_b))
 
             # propagate the difference in blocks as delta
-            delta = tuple((i-j) for i, j in zip(self.attributes_b[block_b], self.attributes_a[block_a]))
+            delta = tuple((i - j) for i, j in zip(self.attributes_b[block_b], self.attributes_a[block_a]))
 
             # get possible new matches
             new_matches = []
 
             # if the blocks are identical then the successors should most likely be matched in the same order
             if self.blocks_probably_identical(block_a, block_b) and len(block_a_succ) == len(block_b_succ):
-                ordered_succ_a = self._get_ordered_successors(self.lmd_a, self.function_a.addr,
-                                                              block_a, block_a_succ)
-                ordered_succ_b = self._get_ordered_successors(self.lmd_b, self.function_b.addr,
-                                                              block_b, block_b_succ)
+                ordered_succ_a = self._get_ordered_successors(self.lmd_a, self.function_a.start, block_a, block_a_succ)
+                ordered_succ_b = self._get_ordered_successors(self.lmd_b, self.function_b.start, block_b, block_b_succ)
 
                 new_matches += zip(ordered_succ_a, ordered_succ_b)
 
-            new_matches += self._get_block_matches(self.attributes_a, self.attributes_b, block_a_succ, block_b_succ,
-                                                   delta, tiebreak_with_block_similarity=True)
-            new_matches += self._get_block_matches(self.attributes_a, self.attributes_b, block_a_pred, block_b_pred,
-                                                   delta, tiebreak_with_block_similarity=True)
+            new_matches += self._get_block_matches(
+                self.attributes_a,
+                self.attributes_b,
+                block_a_succ,
+                block_b_succ,
+                delta,
+                tiebreak_with_block_similarity=True,
+            )
+            new_matches += self._get_block_matches(
+                self.attributes_a,
+                self.attributes_b,
+                block_a_pred,
+                block_b_pred,
+                delta,
+                tiebreak_with_block_similarity=True,
+            )
 
             # for each of the possible new matches add it if it improves the matching
-            for (x, y) in new_matches:
+            for x, y in new_matches:
                 if (x, y) not in processed_matches:
                     processed_matches.add((x, y))
-                    l.debug("FunctionDiff: checking if (%#x, %#x) is better", x.addr, y.addr)
+                    log_debug(f"FunctionDiff: checking if ({x.addr:x}, {y.addr:x}) is better")
                     # if it's a better match than what we already have use it
                     if _is_better_match(x, y, matched_a, matched_b, self.attributes_a, self.attributes_b):
-                        l.debug("FunctionDiff: adding possible match (%#x, %#x)", x.addr, y.addr)
+                        log_debug(f"FunctionDiff: adding possible match ({x.addr:x}, {y.addr:})")
                         if x in matched_a:
                             old_match = matched_a[x]
                             del matched_b[old_match]
@@ -603,15 +637,23 @@ class FunctionDiff():
         self._block_matches = set((x, y) for (x, y) in matched_a.items())
 
         # get the unmatched blocks
-        self._unmatched_blocks_from_a = set(x for x in self.function_a.graph.nodes() if x not in matched_a)
-        self._unmatched_blocks_from_b = set(x for x in self.function_b.graph.nodes() if x not in matched_b)
+        # TODO: this was temporarily removed for testing purposes
+        self._unmatched_blocks_from_a = set() # set(x for x in self.function_a.graph.nodes() if x not in matched_a)
+        self._unmatched_blocks_from_b = set() # set(x for x in self.function_b.graph.nodes() if x not in matched_b)
 
     @staticmethod
     def _get_ordered_successors(bdd, faddr, block, succ):
         return bdd.ordered_successors[(faddr, block.addr)]
 
-    def _get_block_matches(self, attributes_a, attributes_b, filter_set_a=None, filter_set_b=None, delta=(0, 0, 0),
-                           tiebreak_with_block_similarity=False):
+    def _get_block_matches(
+        self,
+        attributes_a: Dict[int, Tuple[int, int, int]],
+        attributes_b: Dict[int, Tuple[int, int, int]],
+        filter_set_a=None,
+        filter_set_b=None,
+        delta=(0, 0, 0),
+        tiebreak_with_block_similarity=False,
+    ):
         """
         :param attributes_a:    A dict of blocks to their attributes
         :param attributes_b:    A dict of blocks to their attributes
@@ -624,25 +666,21 @@ class FunctionDiff():
         :returns:               A list of tuples of matching objects.
         """
         # get the attributes that are in the sets
-        if filter_set_a is None:
-            filtered_attributes_a = {k: v for k, v in attributes_a.items()}
-        else:
-            filtered_attributes_a = {k: v for k, v in attributes_a.items() if k in filter_set_a}
+        if filter_set_a:
+            attributes_a = {k: v for k, v in attributes_a.items() if k in filter_set_a}
 
-        if filter_set_b is None:
-            filtered_attributes_b = {k: v for k, v in attributes_b.items()}
-        else:
-            filtered_attributes_b = {k: v for k, v in attributes_b.items() if k in filter_set_b}
+        if filter_set_b:
+            attributes_b = {k: v for k, v in attributes_b.items() if k in filter_set_b}
 
         # add delta
-        for k in filtered_attributes_a:
-            filtered_attributes_a[k] = tuple((i+j) for i, j in zip(filtered_attributes_a[k], delta))
-        for k in filtered_attributes_b:
-            filtered_attributes_b[k] = tuple((i+j) for i, j in zip(filtered_attributes_b[k], delta))
+        for k in attributes_a:
+            attributes_a[k] = tuple((i + j) for i, j in zip(attributes_a[k], delta))
+        for k in attributes_b:
+            attributes_b[k] = tuple((i + j) for i, j in zip(attributes_b[k], delta))
 
         # get closest
-        closest_a = _get_closest_matches(filtered_attributes_a, filtered_attributes_b)
-        closest_b = _get_closest_matches(filtered_attributes_b, filtered_attributes_a)
+        closest_a = _get_closest_matches(attributes_a, attributes_b)
+        closest_b = _get_closest_matches(attributes_b, attributes_a)
 
         if tiebreak_with_block_similarity:
             # use block similarity to break ties in the first set
@@ -683,20 +721,16 @@ class FunctionDiff():
 
         return matches
 
-    def _get_acceptable_constant_differences(self, block_a, block_b):
+    def _get_acceptable_constant_differences(self, block_a: UniformedBasicBlock, block_b: UniformedBasicBlock):
         # keep a set of the acceptable differences in constants between the two blocks
         acceptable_differences = set()
         acceptable_differences.add(0)
         if not block_a.instruction_addrs or not block_b.instruction_addrs:
             return []
-        try:
-            block_a_base = block_a.instruction_addrs[0]
-        except:
-            import ipdb; ipdb.set_trace()
-        try:
-            block_b_base = block_b.instruction_addrs[0]
-        except:
-            import ipdb; ipdb.set_trace()
+
+        block_a_base = block_a.instruction_addrs[0]
+        block_b_base = block_b.instruction_addrs[0]
+
         acceptable_differences.add(block_b_base - block_a_base)
 
         # get matching successors
@@ -704,16 +738,8 @@ class FunctionDiff():
             # these can be none if we couldn't resolve the call target
             if target_a is None or target_b is None:
                 continue
+
             acceptable_differences.add(target_b - target_a)
             acceptable_differences.add((target_b - block_b_base) - (target_a - block_a_base))
-
-        # get the difference between the data segments
-        # this is hackish
-        #if ".bss" in self.lmd_a.loader.main_object.sections_map and \
-        #        ".bss" in self.lmd_b.loader.main_object.sections_map:
-        #    bss_a = self.lmd_a.loader.main_object.sections_map[".bss"].min_addr
-        #    bss_b = self.lmd_b.loader.main_object.sections_map[".bss"].min_addr
-        #    acceptable_differences.add(bss_b - bss_a)
-        #    acceptable_differences.add((bss_b - block_b_base) - (bss_a - block_a_base))
 
         return acceptable_differences

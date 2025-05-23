@@ -4,3 +4,4 @@ bins
 **__pycache__
 **build/
 funalyzer.egg-info
+**.env
