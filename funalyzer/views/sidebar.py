@@ -93,7 +93,7 @@ class FunalyzerSidebarWidget(SidebarWidget):
                 grid.addWidget(self.options[row + col], row, col)
         self.options[0].setChecked(True)
 
-        layout.addLayout(grid)
+        # layout.addLayout(grid)
 
         # ---- Buttons -----
         self.btn_train_model = QPushButton("Generate DB")
@@ -142,6 +142,7 @@ class FunalyzerSidebarWidget(SidebarWidget):
     def on_btn_generate_db_click(self):
         log_info("Well, your CPU cores are mine now, because I need them to make a DB :)")
         start = time.perf_counter()
+        # TODO: remove
         # debugpy.wait_for_client()
         # debugpy.breakpoint()
         try:
@@ -163,8 +164,9 @@ class FunalyzerSidebarWidget(SidebarWidget):
             log_debug("Starting LibMatch analysis")
             start = time.perf_counter()
 
-            debugpy.wait_for_client()
-            debugpy.breakpoint()
+            # TODO: remove
+            # debugpy.wait_for_client()
+            # debugpy.breakpoint()
 
             fdb = FunalyzerDatabase.load_from_path('/home/dave/arm_none_eabi.fdb')
             if fdb:
@@ -173,7 +175,9 @@ class FunalyzerSidebarWidget(SidebarWidget):
                 lm = LibMatch(binary_descriptor, fdb)
                 lm.compute()
                 log_debug(f"LibMatch computation took {time.perf_counter() - start:.5f}s")
-                lm.match()
+                matches = lm.match()
+                for addr, name in matches.items():
+                    log_info(f"{addr:x} => {name}")
             else:
                 log_error("Failed to load database")
             log_debug(f"LibMatch matching took {time.perf_counter() - start:.5f}s")
@@ -196,7 +200,8 @@ class FunalyzerSidebarWidget(SidebarWidget):
         functions = [func for func in self.bv.functions]
         self.tree.clear()
         for func in functions:
-            item = QTreeWidgetItem([func.name, hex(func.start), ""])
+            name = "gpio_init()" if func.name == "sub_65c" else ""
+            item = QTreeWidgetItem([func.name, hex(func.start), name])
             # item.setData(1, Qt.UserRole, "a") # set name of function
             self.tree.addTopLevelItem(item)
 

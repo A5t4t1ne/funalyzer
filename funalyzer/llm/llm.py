@@ -17,20 +17,20 @@ class LLM_REQUEST_TYPE(Enum):
 
 
 async def llm_request(bv: bn.BinaryView, func: bn.function.Function, req_type: LLM_REQUEST_TYPE, variable: str | None = None) -> str:
-    func_il = func.low_level_il
-    target_func_str = ""
-    all_funcs_str = ""
-    for bb in func_il:
-        target_func_str += "\n".join(str(instr) for instr in bb)
+    target_func_llil_str = ""
+    # all_funcs_str = ""
+    for bb in func.low_level_il:
+        target_func_llil_str += "\n".join(str(instr) for instr in bb)
 
-    for func in bv.functions:
-        try:
-            all_funcs_str += f"{func.name}():"
-            for bb in func.low_level_il:
-                for instr in bb:
-                    all_funcs_str += f'0x{instr.address:x}: {instr}\n'
-        except Exception as e:
-            log_error(e)
+
+    # for func in bv.functions:
+    #     try:
+    #         all_funcs_str += f"{func.name}():"
+    #         for bb in func.low_level_il:
+    #             for instr in bb:
+    #                 all_funcs_str += f'0x{instr.address:x}: {instr}\n'
+    #     except Exception as e:
+    #         log_error(e)
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     response: GenerateContentResponse | None = None
@@ -40,8 +40,11 @@ async def llm_request(bv: bn.BinaryView, func: bn.function.Function, req_type: L
     elif req_type is LLM_REQUEST_TYPE.ANALYZE_FUNC:
         log_info("Starting LLM API request")
         try:
-            prompt = Prompts.ANALYZE_FUNCTION.replace(PromptVars.LLIL_FUNC_CODE, target_func_str)
-            prompt = prompt.replace(PromptVars.LLIL_FILE_CODE, all_funcs_str)
+            prompt = Prompts.ANALYZE_FUNCTION
+            prompt = prompt.replace(str(PromptVars.LLIL_FUNC_CODE), target_func_llil_str)
+            prompt = prompt.replace(str(PromptVars.LIBRARY_NAME), '"arm-none-eabi"')
+            # prompt = prompt.replace(PromptVars.LLIL_FILE_CODE, all_funcs_str)
+
             # server_path = local_path / './gemini_mcp_server.py'
             # response = await run(server_path)
             response = client.models.generate_content(model="gemini-2.0-flash", contents=[prompt])
@@ -50,7 +53,7 @@ async def llm_request(bv: bn.BinaryView, func: bn.function.Function, req_type: L
             log_error(f"Request to LLM failed: {e}")
             return "Request to LLM failed"
     elif req_type == LLM_REQUEST_TYPE.RENAME_FUNC:
-        prompt = Prompts.RENAME_FUNCTION.replace("[LLIL_CODE]", target_func_str)
+        prompt = Prompts.RENAME_FUNCTION.replace("[LLIL_CODE]", target_func_llil_str)
         log_info(prompt)
         response = client.models.generate_content(model="gemini-2.0-flash", contents=[prompt])
     elif req_type == LLM_REQUEST_TYPE.RENAME_VAR:

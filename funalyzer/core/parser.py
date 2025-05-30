@@ -413,6 +413,9 @@ class LibDescriptor:
                 return True
         return False
 
+    def get_func_by_addr(self, addr: int) -> str:
+        return ""
+
     def _compute_function_attributes(self) -> Dict[int, Tuple[int, int, int]]:
         """Exctracts function attributes from the BinaryView.
         The attributes are:
@@ -442,8 +445,6 @@ class LibDescriptor:
             List[int]: List of successor block addresses.
         """
         return [edge.target.start for edge in block.outgoing_edges]
-
-    # Serialization and other methods would be similar, using pickle or your preferred method
 
     def __repr__(self):
         return f"<LibMatchDescriptorBN for {self.filename}>"

@@ -142,13 +142,13 @@ class FunctionDiff:
     """
 
     def __init__(
-        self, desc_a: LibDescriptor, desc_b: LibDescriptor, function_a: UniformedFunction, function_b: UniformedFunction
+        self, binary_desc: LibDescriptor, library_desc: LibDescriptor, binary_func: UniformedFunction, library_func: UniformedFunction
     ):
         """
-        :param lmd_a: The first LMD (owns function_a)
-        :param lmd_b: The second LMD (owns function_b)
-        :param function_a: The first NormalizedFunction object
-        :param function_b: The second NormalizedFunction object
+        :param lmd_a: The first Descriptor (owns function_a)
+        :param lmd_b: The second Descriptor (owns function_b)
+        :param function_a: The first UniformedFunction object
+        :param function_b: The second UniformedFunction object
         """
         self.ignored_expr_types = {
             bn.LowLevelILOperation.LLIL_CONST_PTR,
@@ -158,18 +158,19 @@ class FunctionDiff:
             bn.LowLevelILOperation.LLIL_TAILCALL,
         }
 
-        self.libd_a = desc_a
-        self.libd_b = desc_b
-        self.function_a = function_a
-        self.function_b = function_b
+        self.libd = binary_desc
+        self.binary_desc = library_desc
+        self.binary_func = binary_func
+        self.library_func = library_func
+        self.similarity_score = 0 # TODO: implement
 
         self._probably_identical: bool | None = None
-        self.compare_functions(self.function_a, self.function_b)
+        self.compare_functions(self.binary_func, self.library_func)
 
     @property
     def probably_identical(self) -> bool:
         if not self._probably_identical:
-            self._probably_identical = self.compare_functions(self.function_a, self.function_b)
+            self._probably_identical = self.compare_functions(self.binary_func, self.library_func)
         return self._probably_identical
 
     def compare_functions(self, func1: UniformedFunction, func2: UniformedFunction) -> bool:
