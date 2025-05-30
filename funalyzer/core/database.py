@@ -3,8 +3,8 @@ import binaryninja as bn
 import os
 import shelve
 from pathlib import Path
-from typing import Dict
-from .parser import LibDescriptor, UniformedFunction
+from typing import Dict, ItemsView, Set
+from .parser import LibDescriptor
 import itertools
 
 
@@ -13,8 +13,10 @@ class FunalyzerDatabase:
     A container for analyzed object files
     """
 
-    def __init__(self, lib_descriptors: Dict[str, Dict[str, UniformedFunction]]) -> None:
+    def __init__(self, lib_descriptors: Dict[str, LibDescriptor]) -> None:
         self.lib_descriptors = lib_descriptors
+        self.symbol_addresses: Set[int] = set()
+        self._build_sym_list()
 
     def __getitem__(self, key):
         return self.lib_descriptors.get(key, None)
@@ -24,6 +26,19 @@ class FunalyzerDatabase:
 
     def __repr__(self):
         return f"{self.__class__.__name__}: self.data"
+
+    def _build_sym_list(self):
+        """
+        Build the total list of symbols this database contains.
+        If its not in this list, we are for sure not going to match well with it
+        (used for scoring)
+        """
+        for _, lib_desc in self.lib_descriptors.items():
+            addrs = set(lib_desc.viable_func_addrs)
+            self.symbol_addresses.update(addrs)
+
+    def items(self) -> ItemsView[str, LibDescriptor]:
+        return self.lib_descriptors.items()
 
     def save_to(self, path: str, overwrite: bool = False):
         """Save object to path"""
@@ -37,16 +52,16 @@ class FunalyzerDatabase:
             raise ValueError("Suffix of database name must be '.fdb'")
         elif p.exists() and not overwrite:
             raise ValueError(f"File '{p.resolve()}' already exists")
-        elif not p.is_absolute(): # check if it's an absolute file path
+        elif not p.is_absolute():  # check if it's an absolute file path
             p = Path(os.getcwd()) / p
 
         try:
             with shelve.open(p.resolve()) as shelf:
                 shelf.clear()
-                for filename, functions in self.lib_descriptors.items():
-                    log_debug(f"Processing: {filename}")
-                    data = {addr: func.get_essentials() for addr, func in functions.items()}
-                    shelf[filename] = data
+                for filename, descriptor in self.lib_descriptors.items():
+                    log_debug(f"Saving {filename}")
+                    # data = {addr: func.get_essentials() for addr, func in descriptor.items()}
+                    shelf[filename] = descriptor.get_essentials()
 
                 log_debug(f"Processed {len(shelf)} files")
             log_info(f"Entries successfully saved to DB at {p.resolve()}.")
@@ -74,8 +89,8 @@ class FunalyzerDatabase:
         try:
             with shelve.open(path) as shelf:
                 db_data = dict()
-                for k, essentials in shelf.items():
-                    db_data[k] = UniformedFunction(None, None, parsed_data=essentials)
+                for fname, descriptor in shelf.items():
+                    db_data[fname] = LibDescriptor(parsed_data=descriptor)
 
                 return FunalyzerDatabase(db_data)
         except Exception as e:
@@ -95,21 +110,23 @@ class FunalyzerDatabase:
         valid_extensions = [".o", ".obj", ".bin", ".bdsig"]
 
         directory = Path(path).resolve()
+        lib_descriptors: Dict[str, LibDescriptor] = dict()
+
         if directory.exists() and directory.is_dir():
             # recursively load object files from directory and create a database
             files = itertools.chain.from_iterable(directory.glob(f"**/*{ext}") for ext in valid_extensions)
             dir_parts_count = len(directory.parts)
-            lib_descriptors = dict()
             for i, f in enumerate(files):
-                if i >= 10:
-                    break
+                if i >= 10 and "gpio_api" not in f.name:
+                    # pass
+                    continue
                 try:
                     log_debug(f"Analyzing {f}")
                     with bn.load(f) as bv:
                         fname = Path(bv.file.filename)
                         rel_fname = Path("/".join(fname.parts[dir_parts_count - 1 :]))
                         log_info(f"{str(rel_fname)}")
-                        lib_descriptors[rel_fname] = LibDescriptor(bv)
+                        lib_descriptors[str(rel_fname)] = LibDescriptor(bv)
                 except Exception as e:
                     log_error(f"Couldn't analyze file: {e}")
 

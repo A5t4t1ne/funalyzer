@@ -1,4 +1,6 @@
 from binaryninja.log import log_error, log_info, log_debug
+import debugpy
+from binaryninja.function import Function
 from binaryninjaui import (
     SidebarWidget,
     UIActionHandler,
@@ -20,11 +22,14 @@ from PySide6.QtWidgets import (
     QGridLayout,
 )
 import time
-from ..core.database import FunalyzerDatabase
-from ..core.parser import LibDescriptor
-from ..llm.request import llm_request, LLM_REQUEST_TYPE
-from ..libmatch.libmatch import LibMatch
+from funalyzer.core.database import FunalyzerDatabase
+from funalyzer.core.parser import LibDescriptor
+from funalyzer.llm.llm import llm_request, LLM_REQUEST_TYPE
+from funalyzer.libmatch.libmatch import LibMatch
+import asyncio
 
+
+debugpy.listen(('localhost', 5678))
 
 class FunalyzerSidebarWidget(SidebarWidget):
     """The sidebar widget for Funalyzer.
@@ -88,11 +93,11 @@ class FunalyzerSidebarWidget(SidebarWidget):
                 grid.addWidget(self.options[row + col], row, col)
         self.options[0].setChecked(True)
 
-        layout.addLayout(grid)
+        # layout.addLayout(grid)
 
         # ---- Buttons -----
         self.btn_train_model = QPushButton("Generate DB")
-        self.btn_train_model.clicked.connect(self.on_btn_train_click)
+        self.btn_train_model.clicked.connect(self.on_btn_generate_db_click)
 
         self.btn_analyse = QPushButton("Analyze")
         self.btn_analyse.clicked.connect(self.on_btn_analyse_click)
@@ -104,14 +109,14 @@ class FunalyzerSidebarWidget(SidebarWidget):
 
         self.setLayout(layout)
 
-    def on_item_clicked(self, item, column):
+    def on_item_clicked(self, item, _):
         address = int(item.text(1), 16)
         if address:
             self.selected_func_addr = address
         else:
             self.selected_func_addr = 0
 
-    def on_item_double_clicked(self, item, column):
+    def on_item_double_clicked(self, item, _):
         current_scroll_position = self.tree.verticalScrollBar().value()
 
         selected_item_text = item.text(0)
@@ -126,13 +131,20 @@ class FunalyzerSidebarWidget(SidebarWidget):
             items[0].setSelected(True)
 
     def on_btn_ask_llm_click(self):
-        function = self.bv.get_function_at(self.selected_func_addr)
-        resp = llm_request(LLM_REQUEST_TYPE.ANALYZE, function)
+
+        function: Function = self.bv.get_function_at(self.selected_func_addr)
+        if isinstance(function, Function):
+            resp = asyncio.run(llm_request(self.bv, function, LLM_REQUEST_TYPE.ANALYZE_FUNC))
+        else:
+            resp = f"Function at {self.selected_func_addr} not found"
         self.llm_output.setPlainText(resp)
 
-    def on_btn_train_click(self):
+    def on_btn_generate_db_click(self):
         log_info("Well, your CPU cores are mine now, because I need them to make a DB :)")
         start = time.perf_counter()
+        # TODO: remove
+        # debugpy.wait_for_client()
+        # debugpy.breakpoint()
         try:
             db = FunalyzerDatabase.create_from_path("/home/dave/hslu/SEM6/BAA/libmatch/objects/arm-none-eabi")
             db.save_to('/home/dave/arm_none_eabi.fdb', True)
@@ -147,19 +159,30 @@ class FunalyzerSidebarWidget(SidebarWidget):
         """
         if not self.bv:
             log_error("No binary view present")
-        elif self.options[0].isChecked(): # LibMatch
-            # LibMatch
+            return
+        if self.options[0].isChecked(): # LibMatch
+            log_debug("Starting LibMatch analysis")
+            start = time.perf_counter()
+
+            # TODO: remove
+            # debugpy.wait_for_client()
+            # debugpy.breakpoint()
+
             fdb = FunalyzerDatabase.load_from_path('/home/dave/arm_none_eabi.fdb')
             if fdb:
-                lib_descriptor = LibDescriptor(self.bv)
-                lm = LibMatch(lib_descriptor, fdb)
-                lm.match(lib_descriptor, fdb)
+                # create descriptor of target file and try to match with database
+                binary_descriptor = LibDescriptor(self.bv) 
+                lm = LibMatch(binary_descriptor, fdb)
+                lm.compute()
+                log_debug(f"LibMatch computation took {time.perf_counter() - start:.5f}s")
+                matches = lm.match()
+                for addr, name in matches.items():
+                    log_info(f"{addr:x} => {name}")
             else:
                 log_error("Failed to load database")
-        elif self.options[1].isChecked(): # LMM
+            log_debug(f"LibMatch matching took {time.perf_counter() - start:.5f}s")
+        if self.options[1].isChecked(): # LLM
             pass
-        else:
-            log_error("No analyze option selected")
              
 
     def notifyViewChanged(self, view_frame):
@@ -177,7 +200,8 @@ class FunalyzerSidebarWidget(SidebarWidget):
         functions = [func for func in self.bv.functions]
         self.tree.clear()
         for func in functions:
-            item = QTreeWidgetItem([func.name, hex(func.start), ""])
+            name = "gpio_init()" if func.name == "sub_65c" else ""
+            item = QTreeWidgetItem([func.name, hex(func.start), name])
             # item.setData(1, Qt.UserRole, "a") # set name of function
             self.tree.addTopLevelItem(item)
 
