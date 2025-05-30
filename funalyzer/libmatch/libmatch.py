@@ -1,14 +1,9 @@
-import binaryninja as bn
 from binaryninja.log import log_debug, log_error, log_warn, log_info
-from binaryninja.enums import LowLevelILOperation
-from binaryninja.lowlevelil import LowLevelILCall, LowLevelILInstruction, LowLevelILJump
-from binaryninja.plugin import lowlevelil
 from funalyzer.libmatch.functiondiff import FunctionDiff
 from funalyzer.core.parser import LibDescriptor, UniformedFunction
 from funalyzer.core.database import FunalyzerDatabase
 from collections import defaultdict
-from typing import Any, Dict, DefaultDict, List, Set, Tuple
-from clint.textui.colored import red, yellow, green
+from typing import Dict, DefaultDict, List, Set, Tuple
 
 
 class LibMatch(object):
@@ -126,18 +121,16 @@ class LibMatch(object):
                             precise_matches += 1
                         else:
                             log_info(
-                                red(
-                                    "%#08x => %s:%s(%f) [WRONG, %s] in %s"
-                                    % (f_addr, lib, sym_name, similarity_score, sym, desc.filename)  # TODO: sym.name
-                                )
+                                f"{f_addr:x} => {lib}:{sym_name}({similarity_score}) [WRONG, {sym}] in "
+                                "{desc.filename}"  # TODO: sym.name
                             )
                             incorrect_matches += 1
                 elif len(match_infos) == 0:
                     missing += 1
-                    log_info(red("%#08x => %s(UNMATCHED)" % (f_addr, sym)))  # TODO: sym.name
+                    log_info(f"{f_addr} => {sym}(UNMATCHED)")  # TODO: sym.name
                 else:
                     imprecise_matches += 1
-                    log_info(yellow("%#08x" % f_addr))
+                    log_info(f"{f_addr:x}")
                     for lib, desc, match in match_infos:
                         obj_func_addr = match.library_func.start
                         sym_name = desc.uniformed_functions[obj_func_addr].name
