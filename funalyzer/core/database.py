@@ -71,7 +71,7 @@ class FunalyzerDatabase:
             return False
 
     @staticmethod
-    def load_from_path(path: str) -> "FunalyzerDatabase | None":
+    def load_from_path(path: str | Path) -> "FunalyzerDatabase | None":
         """Load existing database from path.
 
         Args:
@@ -80,7 +80,7 @@ class FunalyzerDatabase:
         Returns:
             _type_: FunalyzerDatabase object
         """
-        p = Path(path)
+        p = Path(path) if isinstance(path, str) else path
         if not p.exists():
             log_error(f"File {path} not found")
             return None
@@ -107,7 +107,7 @@ class FunalyzerDatabase:
         Returns:
             FunalyzerDatabase: A database of analyzed object files
         """
-        valid_extensions = [".o", ".obj", ".bin", ".bdsig"]
+        valid_extensions = [".o", ".obj"]
 
         directory = Path(path).resolve()
         lib_descriptors: Dict[str, LibDescriptor] = dict()
@@ -118,8 +118,8 @@ class FunalyzerDatabase:
             dir_parts_count = len(directory.parts)
             for i, f in enumerate(files):
                 if i >= 10 and "gpio_api" not in f.name:
-                    # pass
-                    continue
+                    pass
+                    # continue
                 try:
                     log_debug(f"Analyzing {f}")
                     with bn.load(f) as bv:
