@@ -1,5 +1,5 @@
-from binaryninja.log import log_error, log_info, log_debug
-import debugpy
+from pathlib import Path
+from binaryninja.log import log_error, log_info, log_debug, log_warn
 from binaryninja.function import Function
 from binaryninjaui import (
     SidebarWidget,
@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QSpacerItem,
     QGridLayout,
+    QLineEdit,
+    QFileDialog
 )
 import time
 from funalyzer.core.database import FunalyzerDatabase
@@ -28,8 +30,6 @@ from funalyzer.llm.llm import llm_request, LLM_REQUEST_TYPE
 from funalyzer.libmatch.libmatch import LibMatch
 import asyncio
 
-
-debugpy.listen(('localhost', 5678))
 
 class FunalyzerSidebarWidget(SidebarWidget):
     """The sidebar widget for Funalyzer.
@@ -95,6 +95,15 @@ class FunalyzerSidebarWidget(SidebarWidget):
 
         # layout.addLayout(grid)
 
+        # ---- Path ----
+
+        self.path_field = QLineEdit(self)
+        self.path_field.setReadOnly(True)
+        self.path_button = QPushButton("Select Lib-Path", self)
+        self.path_button.clicked.connect(self.select_path)
+        layout.addWidget(self.path_field)
+        layout.addWidget(self.path_button)
+
         # ---- Buttons -----
         self.btn_train_model = QPushButton("Generate DB")
         self.btn_train_model.clicked.connect(self.on_btn_generate_db_click)
@@ -108,6 +117,11 @@ class FunalyzerSidebarWidget(SidebarWidget):
         # ---- Set layout ----
 
         self.setLayout(layout)
+
+    def select_path(self):
+        path = QFileDialog.getExistingDirectory(self, "Select File")
+        if path:
+            self.path_field.setText(path)
 
     def on_item_clicked(self, item, _):
         address = int(item.text(1), 16)
@@ -139,23 +153,24 @@ class FunalyzerSidebarWidget(SidebarWidget):
             resp = f"Function at {self.selected_func_addr} not found"
         self.llm_output.setPlainText(resp)
 
-    def on_btn_generate_db_click(self):
-        log_info("Well, your CPU cores are mine now, because I need them to make a DB :)")
+    def on_btn_generate_db_click(self) -> None:
+        """Generate the database for LibMatch.
+        This will parse the given path and create a FunalyzerDatabase and save it to a file.
+        """
         start = time.perf_counter()
-        # TODO: remove
-        # debugpy.wait_for_client()
-        # debugpy.breakpoint()
         try:
-            db = FunalyzerDatabase.create_from_path("/home/dave/hslu/SEM6/BAA/libmatch/objects/arm-none-eabi")
-            db.save_to('/home/dave/arm_none_eabi.fdb', True)
+            db = FunalyzerDatabase.create_from_path(self.path_field.text())
+            db_path = Path(self.path_field.text())
+            db_path = db_path.with_suffix('.fdb')
+            db.save_to(str(db_path), True)
         except Exception as e:
             log_error(f"failed to generate DB: {e}")
 
         log_debug(f"Generating the DB took {time.perf_counter() - start:.5f}s")
 
-    def on_btn_analyse_click(self):
-        """Analyse the current binary view.
-        Tries to match unknown functions to known functions.
+    def on_btn_analyse_click(self) -> None:
+        """Analyse the current binary view using LibMatch and LLM.
+        This will use the selected options to either run LibMatch or LLM analysis in order to match functions.
         """
         if not self.bv:
             log_error("No binary view present")
@@ -164,11 +179,9 @@ class FunalyzerSidebarWidget(SidebarWidget):
             log_debug("Starting LibMatch analysis")
             start = time.perf_counter()
 
-            # TODO: remove
-            # debugpy.wait_for_client()
-            # debugpy.breakpoint()
-
-            fdb = FunalyzerDatabase.load_from_path('/home/dave/arm_none_eabi.fdb')
+            p = Path(self.path_field.text())
+            p = p.with_suffix('.fdb')
+            fdb = FunalyzerDatabase.load_from_path(p)
             if fdb:
                 # create descriptor of target file and try to match with database
                 binary_descriptor = LibDescriptor(self.bv) 
@@ -176,8 +189,11 @@ class FunalyzerSidebarWidget(SidebarWidget):
                 lm.compute()
                 log_debug(f"LibMatch computation took {time.perf_counter() - start:.5f}s")
                 matches = lm.match()
-                for addr, name in matches.items():
-                    log_info(f"{addr:x} => {name}")
+                if matches:
+                    for addr, name in matches.items():
+                        log_info(f"{addr:x} => {name}")
+                else:
+                    log_warn("No matches found")
             else:
                 log_error("Failed to load database")
             log_debug(f"LibMatch matching took {time.perf_counter() - start:.5f}s")
@@ -200,8 +216,7 @@ class FunalyzerSidebarWidget(SidebarWidget):
         functions = [func for func in self.bv.functions]
         self.tree.clear()
         for func in functions:
-            name = "gpio_init()" if func.name == "sub_65c" else ""
-            item = QTreeWidgetItem([func.name, hex(func.start), name])
+            item = QTreeWidgetItem([func.name, hex(func.start), ""])
             # item.setData(1, Qt.UserRole, "a") # set name of function
             self.tree.addTopLevelItem(item)
 
