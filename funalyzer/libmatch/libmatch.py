@@ -51,9 +51,9 @@ class LibMatch(object):
         candidates = self._smoosh(candidates)
         plain_candidates = self._smoosh(plain_candidates)
         if score:
-            log_info("############### UNREFINED MATCHES ###############")
+            # log_info("############### UNREFINED MATCHES ###############")
             self.score_matches(self.binary_desc, plain_candidates, self.fdb)
-            log_info("############### FINAL MATCHES ###############")
+            # log_info("############### FINAL MATCHES ###############")
             self.score_matches(self.binary_desc, candidates, self.fdb)
 
         return self._postprocess_matches(self.binary_desc, candidates)
@@ -145,19 +145,20 @@ class LibMatch(object):
             else:
                 missing += 1
                 log_error(f"{f_addr:x} => {sym}(UNMATCHED)")  # TODO: sym.name
-        log_info(f"Matched symbols: {precise_matches}")
-        log_info(f"Missing symbols: {missing}")
-        log_info(f"Incorrect symbols: {incorrect_matches}")
-        log_info(f"Imprecise matches: {imprecise_matches}")
-        log_info(f"Guesses: {guesses}")
-        log_info(f"Ignored: {ignored}")
-        log_info(f"Total symbols: {total_syms} ")
-        if total_syms != 0:
-            log_info(f"Hit rate: {precise_matches / total_syms}")
-            log_info(f"Error rate: {incorrect_matches / total_syms}")
-            log_info(f"Collision rate: {imprecise_matches / total_syms:}")
-        else:
-            log_warn("'total_syms' is 0")
+        # TODO: undo comment
+        # log_info(f"Matched symbols: {precise_matches}")
+        # log_info(f"Missing symbols: {missing}")
+        # log_info(f"Incorrect symbols: {incorrect_matches}")
+        # log_info(f"Imprecise matches: {imprecise_matches}")
+        # log_info(f"Guesses: {guesses}")
+        # log_info(f"Ignored: {ignored}")
+        # log_info(f"Total symbols: {total_syms} ")
+        # if total_syms != 0:
+        #     log_info(f"Hit rate: {precise_matches / total_syms}")
+        #     log_info(f"Error rate: {incorrect_matches / total_syms}")
+        #     log_info(f"Collision rate: {imprecise_matches / total_syms}")
+        # else:
+        #     log_warn("'total_syms' is 0")
 
     def _postprocess_matches(
         self, target_lmd: LibDescriptor, results: DefaultDict[int, List[Tuple[str, LibDescriptor, FunctionDiff]]]
@@ -194,16 +195,17 @@ class LibMatch(object):
                     # TODO: implement get_func_by_addr
                     sym_name = desc.uniformed_functions[obj_func_addr].name
                 final_matches[f_addr] = sym_name
-        if collisions > 0:
-            log_warn(f"Detected {collisions} collisions")
-        else:
-            log_info(f"Detected {collisions} collisions")
-        if junk > 0:
-            log_warn(f"Ignored {junk} junk function matches")
-        else:
-            log_info(f"Ignored {junk} junk function matches")
+        # TODO: undo comment
+        # if collisions > 0:
+        #     log_warn(f"Detected {collisions} collisions")
+        # else:
+        #     log_info(f"Detected {collisions} collisions")
+        # if junk > 0:
+        #     log_warn(f"Ignored {junk} junk function matches")
+        # else:
+        #     log_info(f"Ignored {junk} junk function matches")
 
-        log_info(f"Made {guesses} guesses")
+        # log_info(f"Made {guesses} guesses")
         log_info(f"Matched {len(list(final_matches.keys()))} symbols")
         return final_matches
 

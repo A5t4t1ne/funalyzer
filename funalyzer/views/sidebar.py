@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Set
 from binaryninja.log import log_error, log_info, log_debug, log_warn
 from binaryninja.function import Function
 from binaryninjaui import (
@@ -30,6 +31,7 @@ from funalyzer.llm.llm import llm_request, LLM_REQUEST_TYPE
 from funalyzer.libmatch.libmatch import LibMatch
 import asyncio
 
+last_view = None
 
 class FunalyzerSidebarWidget(SidebarWidget):
     """The sidebar widget for Funalyzer.
@@ -45,6 +47,7 @@ class FunalyzerSidebarWidget(SidebarWidget):
         self.actionHandler.setupActionHandler(self)
         self.view_frame = frame
         self.view = None
+        self.bv = None
         self.selected_function = None
 
         # ---- Begin UI Items -----
@@ -190,8 +193,20 @@ class FunalyzerSidebarWidget(SidebarWidget):
                 log_debug(f"LibMatch computation took {time.perf_counter() - start:.5f}s")
                 matches = lm.match()
                 if matches:
+                    log_info("\nPossible matches: ")
+                    already_matched: Set = set()
                     for addr, name in matches.items():
+                        if name in already_matched:
+                            continue
+                        
+                        already_matched.add(name)
                         log_info(f"{addr:x} => {name}")
+                    already_matched = set()
+                    for i in range(self.tree.topLevelItemCount()):
+                        item = self.tree.topLevelItem(i)
+                        addr = int(item.text(1), 16)
+                        item.setText(2, matches.get(addr, ""))
+
                 else:
                     log_warn("No matches found")
             else:
@@ -205,20 +220,29 @@ class FunalyzerSidebarWidget(SidebarWidget):
         if view_frame is None:
             self.view_frame = None
             self.view = None
-            log_debug("can't update withou bv")
+            self.tree.clear()
             return
-        else:
-            self.view = view_frame.getCurrentViewInterface()
-            self.view_frame = view_frame
-            self.bv = view_frame.getCurrentBinaryView()
 
-        # functions = [func for func in self.bv.functions if func.name.startswith("sub_")]
-        functions = [func for func in self.bv.functions]
-        self.tree.clear()
-        for func in functions:
-            item = QTreeWidgetItem([func.name, hex(func.start), ""])
-            # item.setData(1, Qt.UserRole, "a") # set name of function
-            self.tree.addTopLevelItem(item)
+        self.view = view_frame.getCurrentViewInterface()
+        self.view_frame = view_frame
+        self.bv = view_frame.getCurrentBinaryView()
+
+        if self.tree.topLevelItemCount() != 0:
+            if self.bv and list(self.bv.functions) == list(view_frame.getCurrentBinaryView().functions):
+                return # same file, don't update tree
+        else:
+            # file changed/opened, update tree
+            # functions = [func for func in self.bv.functions if func.name.startswith("sub_")]
+            functions = [func for func in self.bv.functions]
+            self.tree.clear()
+            for func in functions:
+                item = QTreeWidgetItem([func.name, hex(func.start), ""])
+                # item.setData(1, Qt.UserRole, "a") # set name of function
+                self.tree.addTopLevelItem(item)
+
+
+
+
 
     def contextMenuEvent(self, _):
         self.m_contextMenuManager.show(self.m_menu, self.actionHandler)
