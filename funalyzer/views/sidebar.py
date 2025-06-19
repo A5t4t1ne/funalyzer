@@ -193,15 +193,7 @@ class FunalyzerSidebarWidget(SidebarWidget):
                 log_debug(f"LibMatch computation took {time.perf_counter() - start:.5f}s")
                 matches = lm.match()
                 if matches:
-                    log_info("\nPossible matches: ")
-                    already_matched: Set = set()
-                    for addr, name in matches.items():
-                        if name in already_matched:
-                            continue
-                        
-                        already_matched.add(name)
-                        log_info(f"{addr:x} => {name}")
-                    already_matched = set()
+                    # set possible names in tree widget
                     for i in range(self.tree.topLevelItemCount()):
                         item = self.tree.topLevelItem(i)
                         addr = int(item.text(1), 16)
