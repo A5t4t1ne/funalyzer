@@ -205,7 +205,8 @@ class FunalyzerSidebarWidget(SidebarWidget):
                 log_error("Failed to load database")
             log_debug(f"LibMatch matching took {time.perf_counter() - start:.5f}s")
         if self.options[1].isChecked(): # LLM
-            pass
+            #TODO: add or remove
+            log_warn("LLM functionality for improvement of detection not implemented yet")
              
 
     def notifyViewChanged(self, view_frame):

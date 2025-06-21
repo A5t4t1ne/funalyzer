@@ -74,14 +74,15 @@ class LibMatch(object):
         total_syms = len(scorable_syms)
         ignored = 0
         addrs_to_names = defaultdict(list)
-        for sym in target_desc.viable_func_addrs:
+        for addr in target_desc.viable_func_addrs:
             # TODO: the following line is not correct, it should map sym.rebased_addr to sym.name
-            addrs_to_names[sym].append(sym)
+            # but for getting the name, bv must be available
+            addrs_to_names[addr].append(addr)
 
-        for sym in target_desc.viable_func_addrs:
-            if sym not in scorable_syms:  # TODO: original: sym.name not in ...
+        for addr in target_desc.viable_func_addrs:
+            if addr not in scorable_syms:  # TODO: original: sym.name not in ...
                 # Maybe it's some app code we guessed
-                f_addr = sym  # TODO: original: sym.rebased_addr
+                f_addr = addr  # TODO: original: sym.rebased_addr
                 if f_addr in matches:
                     match_infos = matches[f_addr]
                     if len(match_infos) == 1:
@@ -94,7 +95,7 @@ class LibMatch(object):
                             else:
                                 ignored += 1
                 continue
-            f_addr = sym  # TODO: original: sym.rebased_addr
+            f_addr = addr  # TODO: original: sym.rebased_addr
             if f_addr in target_desc.banned_addrs:
                 ignored += 1
                 log_info(f"{f_addr:x} => Junk")
@@ -103,31 +104,26 @@ class LibMatch(object):
                 if len(match_infos) == 1:
                     for lib, desc, match in match_infos:
                         similarity_score = 0.0
-                        if isinstance(match, str):
-                            # we just have the name
-                            # obj_func_addr = 0
-                            sym_name = match.library_func.name
-                            # similarity_score = 0.0
-                            filename = "(Guessed via context)"
-                            guesses += 1
-                        else:
-                            # TODO: implement similarity_score
-                            # similarity_score = match.similarity_score
-                            obj_func_addr = match.library_func.start
-                            sym_name = desc.uniformed_functions[obj_func_addr].name
-                            filename = desc.filename
+                        # TODO: in libmatch here is also a "guessed via context"
+                        # TODO: implement similarity_score
+                        # similarity_score = match.similarity_score
+                        obj_func_addr = match.library_func.start
+                        sym_name = desc.uniformed_functions[obj_func_addr].name
+                        filename = desc.filename
+
                         if sym_name in addrs_to_names[f_addr]:
                             log_info(f"{f_addr:x} => {lib}:{sym_name}({similarity_score}) [Correct!] in {filename}")
                             precise_matches += 1
                         else:
                             log_info(
-                                f"{f_addr:x} => {lib}:{sym_name}({similarity_score}) [WRONG, {sym}] in "
-                                "{desc.filename}"  # TODO: sym.name
+                                f"{f_addr:x} => {lib}:{sym_name}({similarity_score}) [WRONG, {addr}] in "
+                                "{desc.filename}"
                             )
                             incorrect_matches += 1
-                elif len(match_infos) == 0:
-                    missing += 1
-                    log_info(f"{f_addr} => {sym}(UNMATCHED)")  # TODO: sym.name
+                # TODO: probably unused but keeping it for further analysis
+                # elif len(match_infos) == 0:
+                #     missing += 1
+                #     log_info(f"{f_addr} => {addr}(UNMATCHED)")  # TODO: sym.name
                 else:
                     imprecise_matches += 1
                     log_info(f"{f_addr:x}")
@@ -144,7 +140,7 @@ class LibMatch(object):
                         #     )
             else:
                 missing += 1
-                log_error(f"{f_addr:x} => {sym}(UNMATCHED)")  # TODO: sym.name
+                log_error(f"{f_addr:x} => {addr}(UNMATCHED)")  # TODO: sym.name
         # TODO: undo comment
         # log_info(f"Matched symbols: {precise_matches}")
         # log_info(f"Missing symbols: {missing}")
@@ -280,7 +276,7 @@ class LibMatch(object):
     def _postprocess_second_order_matches(self) -> DefaultDict[int, List[Tuple[str, LibDescriptor, FunctionDiff]]]:
         # Gather the matches based on the functions in the original binary:
         matches: DefaultDict[int, List[Tuple[str, LibDescriptor, FunctionDiff]]] = defaultdict(list)
-        # for lib_res in self._second_order_matches:
+
         for lib_name, lib_matches in self._second_order_matches.items():
             for obj_libd, obj_res in lib_matches.items():
                 for _, obj_func_matches in obj_res.items():  # obj_func_addr, obj_func_matches
