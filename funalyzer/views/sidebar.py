@@ -1,6 +1,5 @@
 from pathlib import Path
-from typing import Set
-from binaryninja.log import log_error, log_info, log_debug, log_warn
+from binaryninja.log import log_error, log_debug, log_warn
 from binaryninja.function import Function
 from binaryninjaui import (
     SidebarWidget,
@@ -134,6 +133,8 @@ class FunalyzerSidebarWidget(SidebarWidget):
             self.selected_func_addr = 0
 
     def on_item_double_clicked(self, item, _):
+        if not self.bv:
+            return
         current_scroll_position = self.tree.verticalScrollBar().value()
 
         selected_item_text = item.text(0)
@@ -148,6 +149,8 @@ class FunalyzerSidebarWidget(SidebarWidget):
             items[0].setSelected(True)
 
     def on_btn_ask_llm_click(self):
+        if not self.bv:
+            return
 
         function: Function = self.bv.get_function_at(self.selected_func_addr)
         if isinstance(function, Function):
@@ -190,7 +193,6 @@ class FunalyzerSidebarWidget(SidebarWidget):
                 binary_descriptor = LibDescriptor(self.bv) 
                 lm = LibMatch(binary_descriptor, fdb)
                 lm.compute()
-                log_debug(f"LibMatch computation took {time.perf_counter() - start:.5f}s")
                 matches = lm.match()
                 if matches:
                     # set possible names in tree widget

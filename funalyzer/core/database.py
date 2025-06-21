@@ -117,9 +117,9 @@ class FunalyzerDatabase:
             files = itertools.chain.from_iterable(directory.glob(f"**/*{ext}") for ext in valid_extensions)
             dir_parts_count = len(directory.parts)
             for i, f in enumerate(files):
-                if i >= 10 and "gpio_api" not in f.name:
+                if i >= 10:
                     pass
-                    # continue
+                    # break
                 try:
                     log_debug(f"Analyzing {f}")
                     with bn.load(f) as bv:

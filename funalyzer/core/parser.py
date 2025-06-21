@@ -2,10 +2,8 @@ from ctypes import ArgumentError
 from enum import Enum, unique, auto
 import binaryninja as bn
 from binaryninja import (
-    BasicBlock,
     Function,
     LowLevelILCall,
-    LowLevelILOperandType,
     LowLevelILOperation,
     InstructionTextTokenType,
 )
@@ -24,7 +22,8 @@ class ParsedDataKey(Enum):
     LLIL = auto()
     NAME = auto()
     BANNED_ADDRS = auto()
-    ORDERED_SUCCS = auto()
+    ORDERED_SUCC = auto()
+    ORDERED_SUCC_COLLECTION = auto()
     STATEMENTS = auto()
     CONSTANTS = auto()
     OPERATIONS = auto()
@@ -66,14 +65,11 @@ class UniformedFunction:
 
         if parsed_data is None:
             if bv is not None and function is not None:
-                self.low_level_il: LowLevelILFunction | List = function.low_level_il
+                self.low_level_il: LowLevelILFunction | List = function.low_level_il or []
                 self.graph: CoreFlowGraph | None = function.create_graph()
                 self.call_sites: Dict[int, List[int]] = {}
                 self.start: int = function.start
                 self.name: str = function.name
-
-                if not self.low_level_il:
-                    self.low_level_il = []
 
                 self.llil_str: str = "\n".join([str(instr) for instr in self.low_level_il])
                 self._parse_basic_blocks()
@@ -97,7 +93,6 @@ class UniformedFunction:
             Dict[EssentialsKey, Any]: A dictionary containing essential information about the function.
         """
         return {
-            # ParsedDataKey.ORIG_FUNCTION: self.orig_function,
             ParsedDataKey.LLIL: self.llil_str,
             ParsedDataKey.CALL_SITES: self.call_sites,
             ParsedDataKey.UNIFORMED_BASIC_BLOCKS: self.basic_blocks,
@@ -229,6 +224,7 @@ class UniformedBasicBlock:
             self.length: int = block.length
             self.instructions: List[UniformedInstruction] = [UniformedInstruction(instr) for instr in block]
             self.blocks = [block]
+            self.ordered_successor = [edge.target.start for edge in block.outgoing_edges]
 
             # Add merged block addresses if any
             # if block.start in parent_function.basic_blocks:
@@ -274,6 +270,7 @@ class UniformedBasicBlock:
             self.call_targets = parsed_data[ParsedDataKey.CALL_TARGETS]
             self.instruction_addrs = parsed_data[ParsedDataKey.INSTRUCTIONS_ADDRS]
             self.instructions = parsed_data[ParsedDataKey.INSTRUCTIONS]
+            self.ordered_successor = parsed_data[ParsedDataKey.ORDERED_SUCC]
 
         # Update size to include merged blocks
         self.size = sum(b.length for b in self.blocks)
@@ -345,13 +342,10 @@ class LibDescriptor:
             for func in functions:
                 uni_func = UniformedFunction(bv, func)
                 self.uniformed_functions[func.start] = uni_func
-                for block in func.low_level_il or []:
-                    self.uniformed_blocks[(func.start, block.start)] = UniformedBasicBlock(
-                        block=block, parent_function=uni_func
-                    )
+                for _, block in uni_func.basic_blocks.items():
+                    self.uniformed_blocks[(uni_func.start, block.start)] = block
 
-                    ord_succ = self._get_ordered_successors(block)
-                    self.ordered_successors[(func.start, block.start)] = ord_succ
+                    self.ordered_successors[(func.start, block.start)] = block.ordered_successor
 
                 if func.name in banned_names or self.is_trivial(func):
                     self.banned_addrs.add(func.start)
@@ -364,7 +358,7 @@ class LibDescriptor:
             self.filename = parsed_data.get(ParsedDataKey.NAME, "")
             self.banned_addrs = parsed_data.get(ParsedDataKey.BANNED_ADDRS, set())
             self.function_attributes = parsed_data.get(ParsedDataKey.FUNCTION_ATTRS, {})
-            self.ordered_successors = parsed_data.get(ParsedDataKey.ORDERED_SUCCS, {})
+            self.ordered_successors = parsed_data.get(ParsedDataKey.ORDERED_SUCC_COLLECTION, {})
             self.viable_func_addrs = parsed_data.get(ParsedDataKey.VIABLE_SYMBOLS, set())
             funcs = {
                 addr: UniformedFunction(parsed_data=data)
@@ -372,8 +366,8 @@ class LibDescriptor:
             }
             self.uniformed_functions = funcs
 
-            # blocks = {addr: UniformedBasicBlock(parsed_data=data) for addr, data in parsed_data[ParsedDataKey.UNIFORMED_BASIC_BLOCKS].items()}
-            # self.uniformed_blocks = blocks
+            blocks = {addr: UniformedBasicBlock(parsed_data=data) for addr, data in parsed_data[ParsedDataKey.UNIFORMED_BASIC_BLOCKS].items()}
+            self.uniformed_blocks = blocks
         else:
             raise ArgumentError("Either 'parsed_data' or a valid BinaryView must be submitted")
 
@@ -391,7 +385,7 @@ class LibDescriptor:
             ParsedDataKey.BANNED_ADDRS: self.banned_addrs,
             ParsedDataKey.UNIFORMED_FUNCTIONS: functions,
             ParsedDataKey.UNIFORMED_BASIC_BLOCKS: blocks,
-            ParsedDataKey.ORDERED_SUCCS: self.ordered_successors,
+            ParsedDataKey.ORDERED_SUCC_COLLECTION: self.ordered_successors,
             ParsedDataKey.FUNCTION_ATTRS: self.function_attributes,
             ParsedDataKey.VIABLE_SYMBOLS: self.viable_func_addrs,
         }
@@ -413,9 +407,6 @@ class LibDescriptor:
                 return True
         return False
 
-    def get_func_by_addr(self, addr: int) -> str:
-        return ""
-
     def _compute_function_attributes(self) -> Dict[int, Tuple[int, int, int]]:
         """Exctracts function attributes from the BinaryView.
         The attributes are:
@@ -435,19 +426,10 @@ class LibDescriptor:
             attributes[func.start] = (num_blocks, num_edges, num_calls)
         return attributes
 
-    def _get_ordered_successors(self, block: BasicBlock) -> List[int]:
-        """Returns the ordered list of successor blocks (by address).
-
-        Args:
-            block (BasicBlock): The block for which to find successors.
-
-        Returns:
-            List[int]: List of successor block addresses.
-        """
-        return [edge.target.start for edge in block.outgoing_edges]
 
     def __repr__(self):
         return f"<LibMatchDescriptorBN for {self.filename}>"
 
     def __str__(self):
         return repr(self)
+

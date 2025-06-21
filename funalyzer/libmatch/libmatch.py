@@ -1,4 +1,4 @@
-from binaryninja.log import log_debug, log_error, log_warn, log_info
+from binaryninja.log import log_error, log_warn, log_info
 from funalyzer.libmatch.functiondiff import FunctionDiff
 from funalyzer.core.parser import LibDescriptor, UniformedFunction
 from funalyzer.core.database import FunalyzerDatabase
@@ -39,8 +39,6 @@ class LibMatch(object):
 
         self._computed = True
 
-        log_info("Library matching computation completed.")
-
     def match(self, score: bool = True) -> Dict[int, str] | None:
         if not self._computed:
             self.compute()
@@ -71,7 +69,7 @@ class LibMatch(object):
         guesses = 0
         targ_sym_addrs = set(target_desc.viable_func_addrs)
         scorable_syms = targ_sym_addrs.intersection(fdb.symbol_addresses)
-        total_syms = len(scorable_syms)
+        # total_syms = len(scorable_syms)
         ignored = 0
         addrs_to_names = defaultdict(list)
         for sym in target_desc.viable_func_addrs:
@@ -233,9 +231,6 @@ class LibMatch(object):
         """
         self._first_order_matches[lib_name] = {}
         self._first_order_matches[lib_name][lib_descriptor] = {}
-        total_possible_matches = 0
-
-        log_debug(f"functions: {len(self.binary_desc.function_attributes)}")
 
         for lib_func_addr in lib_descriptor.viable_func_addrs:
             attrs = lib_descriptor.function_attributes[lib_func_addr]
@@ -244,10 +239,6 @@ class LibMatch(object):
                 if attrs == bin_attrs:
                     possible_binary_func_matches.add(bin_faddr)
             self._first_order_matches[lib_name][lib_descriptor][lib_func_addr] = possible_binary_func_matches
-
-            total_possible_matches += len(possible_binary_func_matches)
-
-        log_debug(f"Done with first order, found {total_possible_matches} possible matches {lib_descriptor}")
 
     def _second_order_heuristic(
         self, binary_desc: LibDescriptor, lib_desc: LibDescriptor, binary_faddr: int, lib_faddr: int
