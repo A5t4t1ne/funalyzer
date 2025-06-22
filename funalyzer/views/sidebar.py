@@ -1,5 +1,7 @@
 from pathlib import Path
-from binaryninja.log import log_error, log_debug, log_warn
+from typing import Dict
+from binaryninja import json
+from binaryninja.log import log_error, log_debug, log_info, log_warn
 from binaryninja.function import Function
 from binaryninjaui import (
     SidebarWidget,
@@ -48,6 +50,12 @@ class FunalyzerSidebarWidget(SidebarWidget):
         self.view = None
         self.bv = None
         self.selected_function = None
+        self.properties: Dict[str, str] = {}
+
+        # ---- Settings ----
+        self.properties_path = Path(__file__).parent.parent / "properties.json"
+        self.load_properties()
+
 
         # ---- Begin UI Items -----
         layout = QVBoxLayout()
@@ -95,12 +103,14 @@ class FunalyzerSidebarWidget(SidebarWidget):
                 grid.addWidget(self.options[row + col], row, col)
         self.options[0].setChecked(True)
 
-        # layout.addLayout(grid)
 
         # ---- Path ----
 
         self.path_field = QLineEdit(self)
         self.path_field.setReadOnly(True)
+        last_path = self.properties.get("last_lib_path", "") 
+        log_info(last_path)
+        self.path_field.setText(last_path)
         self.path_button = QPushButton("Select Lib-Path", self)
         self.path_button.clicked.connect(self.select_path)
         layout.addWidget(self.path_field)
@@ -120,19 +130,36 @@ class FunalyzerSidebarWidget(SidebarWidget):
 
         self.setLayout(layout)
 
-    def select_path(self):
+    def load_properties(self) -> None:
+        if self.properties_path.exists():
+            with open(self.properties_path, "r") as f:
+                self.properties = json.load(f)
+        else:
+            self.properties: Dict[str, str] = {"last_lib_path": ""}
+            self.save_properties()
+
+
+    def save_properties(self) -> None:
+        with open(self.properties_path, "w") as f:
+            json.dump(self.properties, f)
+
+
+    def select_path(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Select File")
         if path:
             self.path_field.setText(path)
 
-    def on_item_clicked(self, item, _):
+        self.properties["last_lib_path"] = path
+        self.save_properties()
+
+    def on_item_clicked(self, item, _) -> None:
         address = int(item.text(1), 16)
         if address:
             self.selected_func_addr = address
         else:
             self.selected_func_addr = 0
 
-    def on_item_double_clicked(self, item, _):
+    def on_item_double_clicked(self, item, _) -> None:
         if not self.bv:
             return
         current_scroll_position = self.tree.verticalScrollBar().value()
