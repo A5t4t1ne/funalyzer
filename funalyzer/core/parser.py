@@ -8,7 +8,7 @@ from binaryninja import (
     InstructionTextTokenType,
 )
 from binaryninja.binaryview import BinaryView
-from binaryninja.log import log_warn
+from binaryninja.log import log_debug, log_warn
 from binaryninja.lowlevelil import LowLevelILBasicBlock, LowLevelILInstruction, LowLevelILFunction
 from binaryninja.flowgraph import CoreFlowGraph
 from typing import Any, Iterable, List, Dict, Optional, Set, Tuple
@@ -234,6 +234,7 @@ class UniformedBasicBlock:
             # Process LLIL for each instruction in block
             for bb in self.blocks:
                 for instr in bb:
+                    instr = UniformedInstruction(instr)
                     self.instruction_addrs.append(instr.address)
 
                     # Extract constants from instruction tokens
@@ -241,15 +242,12 @@ class UniformedBasicBlock:
                         if token.type == InstructionTextTokenType.IntegerToken:
                             self.all_constants.append(token.value)
 
-                    # Record operation type
                     self.operations.append(str(instr.operation))
-
-                    # Store normalized instruction text
                     self.statements.append(str(instr))
 
                     # Handle calls
-                    if isinstance(instr, LowLevelILCall):
-                        target_expr = instr.dest
+                    if isinstance(instr.instr, LowLevelILCall):
+                        target_expr = instr.instr.dest
                         # For direct calls, get the constant address
                         if target_expr.operation in (
                             bn.LowLevelILOperation.LLIL_CONST_PTR,
@@ -258,7 +256,7 @@ class UniformedBasicBlock:
                             call_target = target_expr.value.value
                             self.call_targets.append(call_target)
                         else:
-                            log_warn(f"Call at {hex(instr.address)} has non-constant target: {target_expr}")
+                            log_debug(f"Call at {hex(instr.address)} has non-constant target: {target_expr}")
 
                 # Get jump type from last instruction
                 last_instr = bb[-1]
@@ -307,9 +305,12 @@ class UniformedBasicBlock:
 
 class UniformedInstruction:
     def __init__(self, instr: LowLevelILInstruction) -> None:
+        self.address = instr.address
+        self.tokens = instr.tokens
         self.operation: LowLevelILOperation = instr.operation
         self.value: int = instr.value.value
         self.llil_str: str = str(instr)
+        self.instr = instr.instr
 
     def __eq__(self, value: object, /) -> bool:
         if not isinstance(value, self.__class__):
