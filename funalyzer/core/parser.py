@@ -6,11 +6,11 @@ from binaryninja import (
     LowLevelILCall,
     LowLevelILOperation,
     InstructionTextTokenType,
+    RegisterName,
 )
 from binaryninja.binaryview import BinaryView
-from binaryninja.log import log_debug, log_warn
+from binaryninja.log import log_debug, log_error
 from binaryninja.lowlevelil import LowLevelILBasicBlock, LowLevelILInstruction, LowLevelILFunction
-from binaryninja.flowgraph import CoreFlowGraph
 from typing import Any, Iterable, List, Dict, Optional, Set, Tuple
 from funalyzer.config.funalyzer_config import DEBUG
 
@@ -34,6 +34,7 @@ class ParsedDataKey(Enum):
     UNIFORMED_BASIC_BLOCKS = auto()
     INSTRUCTIONS_ADDRS = auto()
     INSTRUCTIONS = auto()
+    ALL_REGS = auto()
 
     def __str__(self):
         return self.name.lower()
@@ -66,12 +67,10 @@ class UniformedFunction:
         if parsed_data is None:
             if bv is not None and function is not None:
                 self.low_level_il: LowLevelILFunction | List = function.low_level_il or []
-                self.graph: CoreFlowGraph | None = function.create_graph()
                 self.call_sites: Dict[int, List[int]] = {}
                 self.start: int = function.start
                 self.name: str = function.name
 
-                self.llil_str: str = "\n".join([str(instr) for instr in self.low_level_il])
                 self._parse_basic_blocks()
                 self._setup_call_sites()
             else:
@@ -80,7 +79,6 @@ class UniformedFunction:
             self.start = parsed_data[ParsedDataKey.START]
             self.call_sites = parsed_data[ParsedDataKey.CALL_SITES]
             self.basic_blocks = parsed_data[ParsedDataKey.UNIFORMED_BASIC_BLOCKS]
-            self.llil_str = parsed_data[ParsedDataKey.LLIL]
             self.name = parsed_data[ParsedDataKey.NAME]
 
             self.low_level_il = []
@@ -93,7 +91,6 @@ class UniformedFunction:
             Dict[EssentialsKey, Any]: A dictionary containing essential information about the function.
         """
         return {
-            ParsedDataKey.LLIL: self.llil_str,
             ParsedDataKey.CALL_SITES: self.call_sites,
             ParsedDataKey.UNIFORMED_BASIC_BLOCKS: self.basic_blocks,
             ParsedDataKey.START: self.start,
@@ -101,12 +98,14 @@ class UniformedFunction:
         }
 
     def _parse_basic_blocks(self):
+        """Merge basic blocks if possible"""
+
         if self.orig_function is None:
             raise AttributeError("Method can only be called if a function is given")
 
         # Map: block.start -> set of merged block starts
         self.merged_blocks = {}
-        blocks = list(self.low_level_il)  # List of LLILBasicBlock
+        blocks = list(self.low_level_il)
 
         done = False
         while not done:
@@ -125,8 +124,9 @@ class UniformedFunction:
 
                 last_instr = block[-1]
                 if (
-                    #    len(succ.incoming_edges) != 1
-                    last_instr.operation != LowLevelILOperation.LLIL_CALL or block.start > succ.start
+                    len(succ.incoming_edges) != 1
+                    or last_instr.operation != LowLevelILOperation.LLIL_CALL
+                    or block.start > succ.start
                 ):
                     continue
 
@@ -204,9 +204,10 @@ class UniformedBasicBlock:
         # Initialize collections
         self.statements: List[str] = []
         self.all_constants: List[int] = []
-        self.operations: List[str] = []
         self.call_targets: List[int] = []
         self.instruction_addrs: List[int] = []
+        self.instructions: List[UniformedInstruction] = []
+        self.all_regs: List[RegisterName] = []
         self.ignored_operation_types: Set[LowLevelILOperation] = {
             LowLevelILOperation.LLIL_CONST_PTR,
             LowLevelILOperation.LLIL_LOAD,
@@ -216,13 +217,13 @@ class UniformedBasicBlock:
         }
 
         if not parsed_data:
-            if not block or not parent_function:
-                raise ArgumentError("Either parsed data or all the other arguments must be present")
+            if block is None or parent_function is None:
+                log_error("Couldn't parse None data for basic block")
+                return
 
             # Initialize basic properties
             self.start: int = block.start
             self.length: int = block.length
-            self.instructions: List[UniformedInstruction] = [UniformedInstruction(instr) for instr in block]
             self.blocks = [block]
             self.ordered_successor = [edge.target.start for edge in block.outgoing_edges]
 
@@ -234,16 +235,23 @@ class UniformedBasicBlock:
             # Process LLIL for each instruction in block
             for bb in self.blocks:
                 for instr in bb:
-                    instr = UniformedInstruction(instr)
+                    uinstr = UniformedInstruction(instr)
+                    self.instructions.append(uinstr)
                     self.instruction_addrs.append(instr.address)
+
+
+                    rregs = block.function.get_regs_read_by(instr.address)
+                    wregs = block.function.get_regs_written_by(instr.address)
+                    self.all_regs.extend(rregs)
+                    self.all_regs.extend(wregs)
 
                     # Extract constants from instruction tokens
                     for token in instr.tokens:
-                        if token.type == InstructionTextTokenType.IntegerToken:
+                        if (
+                            token.type == InstructionTextTokenType.IntegerToken
+                            and block.view.get_segment_at(token.value) is not None
+                        ):
                             self.all_constants.append(token.value)
-
-                    self.operations.append(str(instr.operation))
-                    self.statements.append(str(instr))
 
                     # Handle calls
                     if isinstance(instr.instr, LowLevelILCall):
@@ -264,11 +272,11 @@ class UniformedBasicBlock:
 
         else:
             self.statements: List[str] = parsed_data[ParsedDataKey.STATEMENTS]
-            self.operations = parsed_data[ParsedDataKey.OPERATIONS]
             self.call_targets = parsed_data[ParsedDataKey.CALL_TARGETS]
             self.instruction_addrs = parsed_data[ParsedDataKey.INSTRUCTIONS_ADDRS]
             self.instructions = parsed_data[ParsedDataKey.INSTRUCTIONS]
             self.ordered_successor = parsed_data[ParsedDataKey.ORDERED_SUCC]
+            self.all_regs = parsed_data[ParsedDataKey.ALL_REGS]
 
         # Update size to include merged blocks
         self.size = sum(b.length for b in self.blocks)
@@ -276,10 +284,10 @@ class UniformedBasicBlock:
     def get_essentials(self) -> Dict[ParsedDataKey, Any]:
         return {
             ParsedDataKey.STATEMENTS: self.statements,
-            ParsedDataKey.OPERATIONS: self.operations,
             ParsedDataKey.INSTRUCTIONS: self.instructions,
             ParsedDataKey.CALL_TARGETS: self.call_targets,
             ParsedDataKey.INSTRUCTIONS_ADDRS: self.instruction_addrs,
+            ParsedDataKey.ALL_REGS: self.all_regs,
         }
 
     def __repr__(self):
@@ -367,7 +375,10 @@ class LibDescriptor:
             }
             self.uniformed_functions = funcs
 
-            blocks = {addr: UniformedBasicBlock(parsed_data=data) for addr, data in parsed_data[ParsedDataKey.UNIFORMED_BASIC_BLOCKS].items()}
+            blocks = {
+                addr: UniformedBasicBlock(parsed_data=data)
+                for addr, data in parsed_data[ParsedDataKey.UNIFORMED_BASIC_BLOCKS].items()
+            }
             self.uniformed_blocks = blocks
         else:
             raise ArgumentError("Either 'parsed_data' or a valid BinaryView must be submitted")
@@ -427,10 +438,8 @@ class LibDescriptor:
             attributes[func.start] = (num_blocks, num_edges, num_calls)
         return attributes
 
-
     def __repr__(self):
         return f"<LibMatchDescriptorBN for {self.filename}>"
 
     def __str__(self):
         return repr(self)
-

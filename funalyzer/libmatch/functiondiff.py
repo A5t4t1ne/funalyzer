@@ -1,10 +1,12 @@
-from ctypes import Union
 import binaryninja as bn
 import types
 import math
-from typing import Any, Iterable, List, Tuple
+from typing import Any, Iterable, List, Set, Tuple
 
-from funalyzer.core.parser import LibDescriptor, UniformedFunction
+from binaryninja.architecture import RegisterName
+from binaryninja.log import log_info
+
+from funalyzer.core.parser import LibDescriptor, UniformedBasicBlock, UniformedFunction, UniformedInstruction
 
 
 DIFF_TYPE = "type"
@@ -136,20 +138,78 @@ def compare_statement_dict(
     return differences
 
 
+def _levenshtein_distance(
+    s1: List[UniformedInstruction] | List[RegisterName] | List[str],
+    s2: List[UniformedInstruction] | List[RegisterName] | List[str],
+) -> int:
+    """Computes the Levenshtein distance between two strings or lists.
+
+    Args:
+        s1 (LevDistArgType): The first list to compare.
+        s2 (LevDistArgType): The second list to compare.
+
+    Returns:
+        int: The Levenshtein distance between the two strings or lists.
+    """
+
+    if len(s1) > len(s2):
+        s1, s2 = s2, s1
+    distances = range(len(s1) + 1)
+    for index2, num2 in enumerate(s2):
+        new_distances = [index2 + 1]
+        for index1, num1 in enumerate(s1):
+            if num1 == num2:
+                new_distances.append(distances[index1])
+            else:
+                new_distances.append(1 + min((distances[index1], distances[index1 + 1], new_distances[-1])))
+        distances = new_distances
+    return distances[-1]
+
+
+def _normalized_levenshtein_distance(s1: List[int], s2: List[int], acceptable_differences: Set[int]) -> int:
+    """Computes the normalized Levenshtein distance between two lists of integers, allowing for acceptable differences.
+
+    Args:
+        s1 (List[int]): The first list of integers to compare.
+        s2 (List[int]): The second list of integers to compare.
+        acceptable_differences (Set[int]): A set of numbers. If (s2[i]-s1[i]) is in the set then they are considered equal. 
+
+    Returns:
+        int: The normalized Levenshtein distance between the two lists.
+    """
+    if len(s1) > len(s2):
+        s1, s2 = s2, s1
+        acceptable_differences = set(-i for i in acceptable_differences)
+    distances = range(len(s1) + 1)
+    for index2, num2 in enumerate(s2):
+        new_distances = [index2 + 1]
+        for index1, num1 in enumerate(s1):
+            if num2 - num1 in acceptable_differences:
+                new_distances.append(distances[index1])
+            else:
+                new_distances.append(1 + min((distances[index1], distances[index1 + 1], new_distances[-1])))
+        distances = new_distances
+    return distances[-1]
+
+
 class FunctionDiff:
     """
-    This class computes the diff between two functions.
+    This class computes and represents the difference between two functions.
+
+    Args:
+        binary_desc (LibDescriptor): The descriptor of the target binary (owns binary_func)
+        library_desc (LibDescriptor): The descriptor of the library (owns library_func)
+        binary_func (UniformedFunction): The function from the binary to compare.
+        library_func (UniformedFunction): The function from the library to compare.
     """
 
     def __init__(
-        self, binary_desc: LibDescriptor, library_desc: LibDescriptor, binary_func: UniformedFunction, library_func: UniformedFunction
+        self,
+        binary_desc: LibDescriptor,
+        library_desc: LibDescriptor,
+        binary_func: UniformedFunction,
+        library_func: UniformedFunction,
     ):
-        """
-        :param lmd_a: The first Descriptor (owns function_a)
-        :param lmd_b: The second Descriptor (owns function_b)
-        :param function_a: The first UniformedFunction object
-        :param function_b: The second UniformedFunction object
-        """
         self.ignored_expr_types = {
             bn.LowLevelILOperation.LLIL_CONST_PTR,
             bn.LowLevelILOperation.LLIL_LOAD,
@@ -157,13 +217,14 @@ class FunctionDiff:
             bn.LowLevelILOperation.LLIL_CALL,
             bn.LowLevelILOperation.LLIL_TAILCALL,
         }
+        self._block_matches: List[Tuple[UniformedBasicBlock, UniformedBasicBlock]] = []
 
-        self.libd = binary_desc
-        self.binary_desc = library_desc
+        self.binary_desc = binary_desc
+        self.library_desc = library_desc
         self.binary_func = binary_func
         self.library_func = library_func
-        self.similarity_score = 0 # TODO: implement
 
+        self._similarity_score: float | None = None
         self._probably_identical: bool | None = None
         self.compare_functions(self.binary_func, self.library_func)
 
@@ -173,18 +234,101 @@ class FunctionDiff:
             self._probably_identical = self.compare_functions(self.binary_func, self.library_func)
         return self._probably_identical
 
+    @property
+    def similarity_score(self):
+        """Computes a similarity score between the two functions."""
+        if self._similarity_score is not None:
+            return self._similarity_score
+
+        score = 0.0
+        n = 0
+        for b1, b2 in self._block_matches:
+            score += self.block_similarity(b1, b2)
+            n += 1
+        self._similarity_score = score / n if n > 0 else 0
+
+        return self._similarity_score
+
+    def block_similarity(self, block_a: UniformedBasicBlock | None, block_b: UniformedBasicBlock | None) -> float:
+        """Computes the similarity between two basic blocks.
+
+        Args:
+            block_a (UniformedBasicBlock | None): First basic block to compare.
+            block_b (UniformedBasicBlock | None): Second basic block to compare.
+
+        Returns:
+            float: The similarity of the basic blocks, normalized for the base address of the block and function call addresses.
+        """
+
+        # if both were None then they are assumed to be the same, if only one was the same they are assumed to differ
+        if block_a is None and block_b is None:
+            return 1.0
+        elif block_a is None or block_b is None:
+            return 0.0
+
+        similarity = 0.0
+        # get all elements for computing similarity
+        # compute total distance
+        total_dist = 0
+        total_dist += _levenshtein_distance(block_a.statements, block_b.statements)
+        total_dist += _levenshtein_distance(block_a.instructions, block_b.instructions)
+        log_info(f"{block_a.instructions}{block_b.instructions}")
+        total_dist += _levenshtein_distance(block_a.all_regs, block_b.all_regs)
+        log_info(f"{block_a.all_regs}{block_b.all_regs}")
+        acceptable_differences = self._get_acceptable_constant_differences(block_a, block_b)
+        total_dist += _normalized_levenshtein_distance(
+            block_a.all_constants, block_b.all_constants, acceptable_differences
+        )
+        total_dist += 0 if block_a.jumpkind == block_b.jumpkind else 1
+
+        # compute similarity
+        num_values = 0
+        num_values += max(len(block_a.statements), len(block_b.statements))
+        num_values += max(len(block_a.all_constants), len(block_b.all_constants))
+        num_values += max(len(block_a.instructions), len(block_b.instructions))
+        num_values += 1  # jumpkind
+        similarity = 1 - (float(total_dist) / num_values)
+
+        return similarity
+
     def compare_functions(self, func1: UniformedFunction, func2: UniformedFunction) -> bool:
         """Compare two functions based on their normalized basic block content"""
         # Get basic blocks for each function
-        blocks1 = list(func1.basic_blocks)
-        blocks2 = list(func2.basic_blocks)
+        blocks1 = list(func1.basic_blocks.items())
+        blocks2 = list(func2.basic_blocks.items())
 
         if len(blocks1) != len(blocks2):
             return False
 
         # Compare each corresponding block
-        for b1, b2 in zip(blocks1, blocks2):
+        for (_, b1), (_, b2) in zip(blocks1, blocks2):
             if b1 != b2:
                 return False
+            else:
+                self._block_matches.append((b1, b2))
 
         return True
+
+    def _get_acceptable_constant_differences(
+        self, block_a: UniformedBasicBlock, block_b: UniformedBasicBlock
+    ) -> Set[int]:
+        # keep a set of the acceptable differences in constants between the two blocks
+        acceptable_differences: Set[int] = set()
+        acceptable_differences.add(0)
+
+        if not block_a.instruction_addrs or not block_b.instruction_addrs:
+            return set()
+
+        acceptable_differences.add(block_b.start - block_a.start)
+
+        # get matching successors
+        for target_a, target_b in zip(block_a.call_targets, block_b.call_targets):
+            # these can be none if we couldn't resolve the call target
+            if target_a is None or target_b is None:
+                continue
+            acceptable_differences.add(target_b - target_a)
+            acceptable_differences.add((target_b - block_b.start) - (target_a - block_a.start))
+
+        # TODO: in original implementation there is more commented out code here, maybe necessary
+
+        return acceptable_differences

@@ -218,7 +218,7 @@ class FunalyzerSidebarWidget(SidebarWidget):
             if fdb:
                 # create descriptor of target file and try to match with database
                 binary_descriptor = LibDescriptor(self.bv) 
-                lm = LibMatch(binary_descriptor, fdb)
+                lm = LibMatch(self.bv, binary_descriptor, fdb)
                 lm.compute()
                 matches = lm.match()
                 if matches:

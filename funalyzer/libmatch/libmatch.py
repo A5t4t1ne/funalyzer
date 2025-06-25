@@ -1,4 +1,5 @@
-from binaryninja.log import log_error, log_warn, log_info
+from binaryninja import BinaryView
+from binaryninja.log import log_debug, log_error, log_warn, log_info
 from funalyzer.libmatch.functiondiff import FunctionDiff
 from funalyzer.core.parser import LibDescriptor, UniformedFunction
 from funalyzer.core.database import FunalyzerDatabase
@@ -7,11 +8,12 @@ from typing import Dict, DefaultDict, List, Set, Tuple
 
 
 class LibMatch(object):
-    def __init__(self, binary_desc: LibDescriptor, db: FunalyzerDatabase):
+    def __init__(self, bv: BinaryView, binary_desc: LibDescriptor, db: FunalyzerDatabase):
         """
         :param binary_lmd: The LibMatchDescriptor of the target binary
         :param lib_lmds: An iterable of LibMatchDescriptors corresponding to libraries
         """
+        self.bv = bv
         self.binary_desc = binary_desc
         self.fdb = db
         self.ambiguous_funcs = []
@@ -105,12 +107,12 @@ class LibMatch(object):
                             # we just have the name
                             # obj_func_addr = 0
                             sym_name = match.library_func.name
-                            # similarity_score = 0.0
+                            similarity_score = 0.0
                             filename = "(Guessed via context)"
                             guesses += 1
                         else:
                             # TODO: implement similarity_score
-                            # similarity_score = match.similarity_score
+                            similarity_score = match.similarity_score
                             obj_func_addr = match.library_func.start
                             sym_name = desc.uniformed_functions[obj_func_addr].name
                             filename = desc.filename
@@ -128,21 +130,19 @@ class LibMatch(object):
                     log_info(f"{f_addr} => {sym}(UNMATCHED)")  # TODO: sym.name
                 else:
                     imprecise_matches += 1
-                    log_info(f"{f_addr:x}")
+                    log_debug(f"{f_addr:x}")
                     for lib, desc, match in match_infos:
                         obj_func_addr = match.library_func.start
                         sym_name = desc.uniformed_functions[obj_func_addr].name
-                        # if sym_name == sym:  # TODO: sym.name
-                        #     log_info(
-                        #         green("\t=> %s:%s(%f) in %s" % (lib, sym_name, match.similarity_score, desc.filename))
-                        #     )
-                        # else:
-                        #     log_info(
-                        #         yellow("\t=> %s:%s(%f) in %s" % (lib, sym_name, match.similarity_score, desc.filename))
-                        #     )
+                        if sym_name == sym:  # TODO: sym.name, thats not right, doesn't make sense
+                            log_debug(f"\t=> {lib}:{sym_name}({match.similarity_score}) in {desc.filename}")
+                        else:
+                            log_debug(f"\t=> {lib}:{sym_name}({match.similarity_score}) in {desc.filename}")
             else:
                 missing += 1
                 log_error(f"{f_addr:x} => {sym}(UNMATCHED)")  # TODO: sym.name
+
+        total_syms = len(scorable_syms)
         # TODO: undo comment
         # log_info(f"Matched symbols: {precise_matches}")
         # log_info(f"Missing symbols: {missing}")
@@ -151,12 +151,10 @@ class LibMatch(object):
         # log_info(f"Guesses: {guesses}")
         # log_info(f"Ignored: {ignored}")
         # log_info(f"Total symbols: {total_syms} ")
-        # if total_syms != 0:
-        #     log_info(f"Hit rate: {precise_matches / total_syms}")
-        #     log_info(f"Error rate: {incorrect_matches / total_syms}")
-        #     log_info(f"Collision rate: {imprecise_matches / total_syms}")
-        # else:
-        #     log_warn("'total_syms' is 0")
+        if total_syms != 0:
+            log_info(f"Hit rate: {precise_matches / total_syms}")
+            log_info(f"Error rate: {incorrect_matches / total_syms}")
+            log_info(f"Collision rate: {imprecise_matches / total_syms}")
 
     def _postprocess_matches(
         self, target_lmd: LibDescriptor, results: DefaultDict[int, List[Tuple[str, LibDescriptor, FunctionDiff]]]
@@ -281,15 +279,14 @@ class LibMatch(object):
                                 # TODO
                                 # A collision! But is it a real one?
                                 # Did we match better?
-                                # _, _, prev_match_info = matches[target_addr][0]  # prev_lib, prev_lmd,
-                                # if match_info.similarity_score > prev_match_info.similarity_score:
-                                #     # Better match
-                                #     matches[target_addr] = [(lib_name, obj_libd, match_info)]
-                                # elif match_info.similarity_score == prev_match_info.similarity_score:
-                                #     matches[target_addr].append((lib_name, obj_libd, match_info))
-                                # else:
-                                #     continue  # Worse match, ignore
-                                pass
+                                _, _, prev_match_info = matches[target_addr][0]  # prev_lib, prev_lmd,
+                                if match_info.similarity_score > prev_match_info.similarity_score:
+                                    # Better match
+                                    matches[target_addr] = [(lib_name, obj_libd, match_info)]
+                                elif match_info.similarity_score == prev_match_info.similarity_score:
+                                    matches[target_addr].append((lib_name, obj_libd, match_info))
+                                else:
+                                    continue  # Worse match, ignore
                             else:
                                 matches[target_addr].append((lib_name, obj_libd, match_info))
         return matches
@@ -387,7 +384,8 @@ class LibMatch(object):
         for _, callees in target_func.call_sites.items():
             callees_set: Set[Tuple[int, str]] = set()
             for callee_addr in callees:
-                if not self.binary_desc.bv.is_valid_offset(callee_addr):
+                # TODO
+                if not self.bv.is_valid_offset(callee_addr):
                     # Address outside the binary view
                     callee_name = "UnresolvableCallTarget"
                     callees_set.add((callee_addr, callee_name))
@@ -395,7 +393,7 @@ class LibMatch(object):
                     callee_name = "Ignored"
                     callees_set.add((callee_addr, callee_name))
                 elif callee_addr not in self._candidate_matches or len(self._candidate_matches[callee_addr]) == 0:
-                    log_error(f"Cannot disambiguate function at {f_addr:x}, unmatched call to {callee_addr:x}")
+                    log_error(f"Cannot disambiguate function at 0x{f_addr:x}, unmatched call to 0x{callee_addr:x}")
                     self.ambiguous_funcs.append(f_addr)
                     self.recursion_list.remove(f_addr)
                     return
@@ -411,8 +409,9 @@ class LibMatch(object):
             target_callees.append(callees_set)
 
         # Now, for each candidate match, check if callees are compatible
-        narrowed_matches = []
-        for lib_name, lib_lmd, fdiff in matches:
+        narrowed_matches: List[Tuple[str, LibDescriptor, FunctionDiff]] = []
+        for lib_name, lib_desc, fdiff in matches:
+            # TODO
             # if isinstance(fdiff, str):
             #     # Guessed name, keep only if exact narrowing is off
             #     if not exact_narrowing:
@@ -424,14 +423,12 @@ class LibMatch(object):
             for callees in lib_func.call_sites.values():
                 callees_set: Set[Tuple[int, str]] = set()
                 for callee_addr in callees:
-                    if not lib_lmd.bv.is_valid_offset(callee_addr):
-                        callee_name = "UnresolvableCallTarget"
-                        callees_set.add((callee_addr, callee_name))
-                    elif callee_addr in lib_lmd.banned_addrs:
+                    # TODO: remove/resolve
+                    if callee_addr in lib_desc.banned_addrs:
                         callee_name = "Ignored"
                         callees_set.add((callee_addr, callee_name))
                     else:
-                        callee_func = lib_lmd.bv.get_function_at(callee_addr)
+                        callee_func = lib_desc.uniformed_functions.get(callee_addr)
                         if callee_func is None:
                             callee_name = "Unknown"
                         else:
@@ -445,7 +442,7 @@ class LibMatch(object):
                 if exact_narrowing:
                     continue
                 else:
-                    narrowed_matches.append((lib_name, lib_lmd, fdiff))
+                    narrowed_matches.append((lib_name, lib_desc, fdiff))
                     continue
 
             # Check if all callees sets intersect non-empty
@@ -456,7 +453,7 @@ class LibMatch(object):
                     break
 
             if compatible:
-                narrowed_matches.append((lib_name, lib_lmd, fdiff))
+                narrowed_matches.append((lib_name, lib_desc, fdiff))
 
         if len(narrowed_matches) < len(matches):
             log_info(f"Narrowed matches for function {f_addr:#08x} from {len(matches)} to {len(narrowed_matches)}")
@@ -465,8 +462,7 @@ class LibMatch(object):
             for _, _, fdiff in narrowed_matches:
                 if isinstance(fdiff, str):
                     continue
-                for call_site in fdiff.function_a.call_sites:
-                    _, callees = call_site
+                for _, callees in fdiff.library_func.call_sites.items():
                     for callee_addr in callees:
                         if callee_addr in self._candidate_matches:
                             self._narrow_third_order(callee_addr, self._candidate_matches[callee_addr])
@@ -577,7 +573,7 @@ class LibMatch(object):
         """
         log_info("Starting deduplication of candidate matches...")
         # Iterate through candidate matches and resolve collisions
-        for f_addr in list(self._candidate_matches.keys()):  # Use list() to avoid modifying dict while iterating
+        for f_addr in list(self._candidate_matches.keys()):
             matches = self._candidate_matches[f_addr]
 
             if not matches:
@@ -586,13 +582,11 @@ class LibMatch(object):
             if len(matches) == 1:
                 continue  # Skip if only one match
 
-            # Implement your collision resolution logic here
-            # Example: Keep only the match with the highest similarity score
             best_match = max(
                 matches, key=lambda match: match[2].similarity_score if hasattr(match[2], "similarity_score") else 0
             )
             self._candidate_matches[f_addr] = [best_match]  # Keep only the best match
-            log_info(
+            log_debug(
                 f"Deduplicated function {f_addr:#08x}, keeping best match '{best_match[2].library_func.name if hasattr(best_match[2], 'function_b') else best_match[2]}'"
             )
 
