@@ -2,17 +2,15 @@ from ctypes import ArgumentError
 from enum import Enum, unique, auto
 import binaryninja as bn
 from binaryninja import (
-    Function,
     LowLevelILCall,
     LowLevelILOperation,
     InstructionTextTokenType,
     RegisterName,
 )
 from binaryninja.binaryview import BinaryView
-from binaryninja.log import log_debug, log_error
-from binaryninja.lowlevelil import LowLevelILBasicBlock, LowLevelILInstruction, LowLevelILFunction
-from typing import Any, Iterable, List, Dict, Optional, Set, Tuple
-from funalyzer.config.funalyzer_config import DEBUG
+from binaryninja.log import log_debug
+from binaryninja.lowlevelil import LowLevelILBasicBlock, LowLevelILInstruction, LowLevelILFunction, LowLevelILOperandType
+from typing import Any, List, Dict, Optional, Set, Tuple
 
 
 @unique
@@ -38,6 +36,21 @@ class ParsedDataKey(Enum):
 
     def __str__(self):
         return self.name.lower()
+
+
+IGNORED_OPERATION_TYPES: Set[LowLevelILOperation] = {
+    LowLevelILOperation.LLIL_CONST,
+    LowLevelILOperation.LLIL_CONST_PTR,
+    LowLevelILOperation.LLIL_JUMP,
+    LowLevelILOperation.LLIL_JUMP_TO,
+    LowLevelILOperation.LLIL_CALL,
+    LowLevelILOperation.LLIL_TAILCALL,
+    LowLevelILOperation.LLIL_IF,
+    LowLevelILOperation.LLIL_GOTO,
+    LowLevelILOperation.LLIL_LOAD,
+    LowLevelILOperation.LLIL_STORE,
+    LowLevelILOperation.LLIL_SET_REG,
+}
 
 
 class UniformedFunction:
@@ -78,8 +91,10 @@ class UniformedFunction:
         else:
             self.start = parsed_data[ParsedDataKey.START]
             self.call_sites = parsed_data[ParsedDataKey.CALL_SITES]
-            self.basic_blocks = parsed_data[ParsedDataKey.UNIFORMED_BASIC_BLOCKS]
             self.name = parsed_data[ParsedDataKey.NAME]
+
+            bbs_data = parsed_data[ParsedDataKey.UNIFORMED_BASIC_BLOCKS]
+            self.basic_blocks = {addr: UniformedBasicBlock(parsed_data=data) for addr, data in bbs_data.items()}
 
             self.low_level_il = []
             self.graph = None
@@ -92,7 +107,7 @@ class UniformedFunction:
         """
         return {
             ParsedDataKey.CALL_SITES: self.call_sites,
-            ParsedDataKey.UNIFORMED_BASIC_BLOCKS: self.basic_blocks,
+            ParsedDataKey.UNIFORMED_BASIC_BLOCKS: {addr: bb.get_essentials() for addr, bb in self.basic_blocks.items()},
             ParsedDataKey.START: self.start,
             ParsedDataKey.NAME: self.name,
         }
@@ -106,7 +121,11 @@ class UniformedFunction:
         # Map: block.start -> set of merged block starts
         self.merged_blocks = {}
         blocks = list(self.low_level_il)
+        self.basic_blocks = {bb.start: UniformedBasicBlock(block=bb) for bb in blocks}
 
+        return
+
+        # TODO
         done = False
         while not done:
             done = True
@@ -122,15 +141,15 @@ class UniformedFunction:
                 if succ is None:
                     continue
 
-                last_instr = block[-1]
+                # last_instr = block[-1]
                 if (
-                    len(succ.incoming_edges) != 1
-                    or last_instr.operation != LowLevelILOperation.LLIL_CALL
-                    or block.start > succ.start
+                    # len(succ.incoming_edges) != 1
+                    # or last_instr.operation != LowLevelILOperation.LLIL_CALL
+                    block.start > succ.start
                 ):
                     continue
 
-                # Merge: record that block absorbs succ
+                # # Merge: record that block absorbs succ
                 if block.start not in self.merged_blocks:
                     self.merged_blocks[block.start] = set()
                 self.merged_blocks[block.start].add(succ.start)
@@ -155,7 +174,7 @@ class UniformedFunction:
             if call_targets:
                 self.call_sites[block.start] = call_targets
 
-    def _get_call_targets(self, block) -> List[int]:
+    def _get_call_targets(self, block: LowLevelILBasicBlock) -> List[int]:
         call_targets: List[int] = []
         for instr in block:
             if instr.operation == LowLevelILOperation.LLIL_CALL:
@@ -186,16 +205,14 @@ class UniformedBasicBlock:
     def __init__(
         self,
         block: Optional[LowLevelILBasicBlock] = None,
-        parent_function: Optional[UniformedFunction] = None,
         parsed_data: Optional[dict] = None,
     ):
         """Creates a uniformed basic block structure for further use.
-        Either (Binary View, block, parent function) OR already parsed data is necessary.
+        Either (Binary View, block) OR already parsed data is necessary.
         If the parsed data is provided, the other arguments are ignored.
 
         Args:
             block (Optional[LowLevelILBasicBlock], optional): original block. Defaults to None.
-            parent_function (Optional[UniformedFunction], optional): parent function. Defaults to None.
             parsed_data (Optional[dict], optional): parsed data. Defaults to None.
 
         Raises:
@@ -208,23 +225,15 @@ class UniformedBasicBlock:
         self.instruction_addrs: List[int] = []
         self.instructions: List[UniformedInstruction] = []
         self.all_regs: List[RegisterName] = []
-        self.ignored_operation_types: Set[LowLevelILOperation] = {
-            LowLevelILOperation.LLIL_CONST_PTR,
-            LowLevelILOperation.LLIL_LOAD,
-            LowLevelILOperation.LLIL_JUMP,
-            LowLevelILOperation.LLIL_CALL,
-            LowLevelILOperation.LLIL_TAILCALL,
-        }
 
         if not parsed_data:
-            if block is None or parent_function is None:
-                log_error("Couldn't parse None data for basic block")
-                return
+            if block is None:
+                raise Exception("Couldn't parse None data while instantiating a uniformed basic block")
 
             # Initialize basic properties
-            self.start: int = block.start
+            self.start = block.start
             self.length: int = block.length
-            self.blocks = [block]
+            self.blocks: List[LowLevelILBasicBlock] = [block]
             self.ordered_successor = [edge.target.start for edge in block.outgoing_edges]
 
             # Add merged block addresses if any
@@ -238,12 +247,13 @@ class UniformedBasicBlock:
                     uinstr = UniformedInstruction(instr)
                     self.instructions.append(uinstr)
                     self.instruction_addrs.append(instr.address)
+                    self.statements.append(instr.operation.name)
 
-
-                    rregs = block.function.get_regs_read_by(instr.address)
-                    wregs = block.function.get_regs_written_by(instr.address)
-                    self.all_regs.extend(rregs)
-                    self.all_regs.extend(wregs)
+                    if block.function:
+                        rregs = block.function.get_regs_read_by(instr.address)
+                        wregs = block.function.get_regs_written_by(instr.address)
+                        self.all_regs.extend(rregs)
+                        self.all_regs.extend(wregs)
 
                     # Extract constants from instruction tokens
                     for token in instr.tokens:
@@ -267,10 +277,12 @@ class UniformedBasicBlock:
                             log_debug(f"Call at {hex(instr.address)} has non-constant target: {target_expr}")
 
                 # Get jump type from last instruction
-                last_instr = bb[-1]
-                self.jumpkind = last_instr.operation if last_instr else None
+
+            # Update size to include merged blocks
+            self.size = sum(b.length for b in self.blocks)
 
         else:
+            self.start = parsed_data[ParsedDataKey.START]
             self.statements: List[str] = parsed_data[ParsedDataKey.STATEMENTS]
             self.call_targets = parsed_data[ParsedDataKey.CALL_TARGETS]
             self.instruction_addrs = parsed_data[ParsedDataKey.INSTRUCTIONS_ADDRS]
@@ -278,32 +290,40 @@ class UniformedBasicBlock:
             self.ordered_successor = parsed_data[ParsedDataKey.ORDERED_SUCC]
             self.all_regs = parsed_data[ParsedDataKey.ALL_REGS]
 
-        # Update size to include merged blocks
-        self.size = sum(b.length for b in self.blocks)
+        last_instr = self.instructions[-1]
+        self.jumpkind = last_instr.operation if last_instr else None
 
     def get_essentials(self) -> Dict[ParsedDataKey, Any]:
         return {
+            ParsedDataKey.START: self.start,
             ParsedDataKey.STATEMENTS: self.statements,
-            ParsedDataKey.INSTRUCTIONS: self.instructions,
             ParsedDataKey.CALL_TARGETS: self.call_targets,
             ParsedDataKey.INSTRUCTIONS_ADDRS: self.instruction_addrs,
+            ParsedDataKey.INSTRUCTIONS: self.instructions,
+            ParsedDataKey.ORDERED_SUCC: self.ordered_successor,
             ParsedDataKey.ALL_REGS: self.all_regs,
         }
 
     def __repr__(self):
         size = sum([b.length for b in self.blocks])
-        return f"<Basic Block for {self.start:x}, {size} bytes>"
+        return f"<Uniformed Basic Block for 0x{self.start:x} with {size} bytes>"
 
     def __iter__(self):
         for instr in self.instructions:
             yield instr
 
+    def __neq__(self, value: object, /) -> bool:
+        return not self.__eq__(value)
+
     def __eq__(self, value: object, /) -> bool:
         if not isinstance(value, UniformedBasicBlock):
             return False
 
-        for instr1, instr2 in zip(self, value):
-            if instr1.operation in self.ignored_operation_types or instr2.operation in self.ignored_operation_types:
+        if len(self.instructions) != len(value.instructions):
+            return False
+
+        for instr1, instr2 in zip(self.instructions, value.instructions):
+            if not instr1.is_comparable or not instr2.is_comparable:
                 continue
             if instr1 != instr2:
                 return False
@@ -314,11 +334,16 @@ class UniformedBasicBlock:
 class UniformedInstruction:
     def __init__(self, instr: LowLevelILInstruction) -> None:
         self.address = instr.address
-        self.tokens = instr.tokens
-        self.operation: LowLevelILOperation = instr.operation
         self.value: int = instr.value.value
         self.llil_str: str = str(instr)
-        self.instr = instr.instr
+        self.operation: LowLevelILOperation = instr.operation
+        self.operands: List[str] = [str(op) for op in instr.operands]
+        self.is_comparable: bool = False if instr.operation in IGNORED_OPERATION_TYPES else True
+        self.operation_is_call: bool = (
+            True
+            if instr.operation == LowLevelILOperation.LLIL_CALL or instr.operation == LowLevelILOperation.LLIL_TAILCALL
+            else False
+        )
 
     def __eq__(self, value: object, /) -> bool:
         if not isinstance(value, self.__class__):
@@ -327,7 +352,9 @@ class UniformedInstruction:
 
 
 class LibDescriptor:
-    def __init__(self, bv: Optional[BinaryView] = None, banned_names=("$d", "$t"), parsed_data: Optional[Dict] = None):
+    def __init__(
+        self, bv: Optional[BinaryView] = None, parsed_data: Optional[Dict] = None
+    ):
         self.banned_addrs: Set[int] = set()
         self.uniformed_functions: Dict[int, UniformedFunction] = dict()
         self.uniformed_blocks: Dict[Tuple[int, int], UniformedBasicBlock] = dict()
@@ -338,17 +365,16 @@ class LibDescriptor:
         if not parsed_data and bv:
             self.bv = bv
 
-            if DEBUG:
-                func = self.bv.get_function_at(0x65C)
-                if not func:
-                    raise Exception("func not found")
-                functions: Iterable[bn.function.Function] = [func]
-            else:
-                functions = self.bv.functions
+            functions = self.bv.functions
 
             self.filename = bv.file.filename
             # Normalize functions
             for func in functions:
+                # filter stub functions
+                if len(func.basic_blocks) == 1:
+                    last_instr = func.basic_blocks[0][-1]
+                    if last_instr == LowLevelILOperation.LLIL_TAILCALL or last_instr == LowLevelILOperation.LLIL_CALL:
+                        continue
                 uni_func = UniformedFunction(bv, func)
                 self.uniformed_functions[func.start] = uni_func
                 for _, block in uni_func.basic_blocks.items():
@@ -356,7 +382,7 @@ class LibDescriptor:
 
                     self.ordered_successors[(func.start, block.start)] = block.ordered_successor
 
-                if func.name in banned_names or self.is_trivial(func):
+                if self.is_trivial(uni_func):
                     self.banned_addrs.add(func.start)
                 else:
                     self.viable_func_addrs.add(func.start)
@@ -404,8 +430,8 @@ class LibDescriptor:
 
         return data
 
-    def is_trivial(self, func: Function) -> bool:
-        """A function is trivial if it consists of a single block with <=2 instructions.
+    def is_trivial(self, func: UniformedFunction) -> bool:
+        """A function is trivial if it consists of a single block with <=2 instructions or if it is just a stub.
 
         Args:
             func (Function): Function to be checked.
@@ -414,8 +440,12 @@ class LibDescriptor:
             bool: True if the function is trivial, False otherwise.
         """
         if len(func.basic_blocks) == 1:
-            block = next(iter(func.basic_blocks))
-            if len(list(block.disassembly_text)) <= 2:
+            block = func.basic_blocks[0]
+            if len(block.instructions) <= 2:
+                return True
+
+            last_instr = block.instructions[-1]
+            if last_instr.operation_is_call:
                 return True
         return False
 

@@ -1,10 +1,11 @@
 import binaryninja as bn
 import types
 import math
+import debugpy
 from typing import Any, Iterable, List, Set, Tuple
 
+
 from binaryninja.architecture import RegisterName
-from binaryninja.log import log_info
 
 from funalyzer.core.parser import LibDescriptor, UniformedBasicBlock, UniformedFunction, UniformedInstruction
 
@@ -226,7 +227,6 @@ class FunctionDiff:
 
         self._similarity_score: float | None = None
         self._probably_identical: bool | None = None
-        self.compare_functions(self.binary_func, self.library_func)
 
     @property
     def probably_identical(self) -> bool:
@@ -271,10 +271,8 @@ class FunctionDiff:
         # compute total distance
         total_dist = 0
         total_dist += _levenshtein_distance(block_a.statements, block_b.statements)
-        total_dist += _levenshtein_distance(block_a.instructions, block_b.instructions)
-        log_info(f"{block_a.instructions}{block_b.instructions}")
+        # total_dist += _levenshtein_distance(block_a.instructions, block_b.instructions)
         total_dist += _levenshtein_distance(block_a.all_regs, block_b.all_regs)
-        log_info(f"{block_a.all_regs}{block_b.all_regs}")
         acceptable_differences = self._get_acceptable_constant_differences(block_a, block_b)
         total_dist += _normalized_levenshtein_distance(
             block_a.all_constants, block_b.all_constants, acceptable_differences

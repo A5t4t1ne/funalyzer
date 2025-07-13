@@ -17,11 +17,18 @@ class LibMatch(object):
         self.binary_desc = binary_desc
         self.fdb = db
         self.ambiguous_funcs = []
+        self.recursion_list = []
         self._computed = False
-        self._first_order_matches: DefaultDict[str, Dict[LibDescriptor, Dict[int, Set]]] = defaultdict()
+        self._first_order_matches: DefaultDict[str, Dict[LibDescriptor, Dict[int, Set[int]]]] = defaultdict()
         self._second_order_matches: DefaultDict[str, Dict[LibDescriptor, Dict[int, List[Tuple[int, FunctionDiff]]]]] = (
             defaultdict(dict)
         )
+        self._candidate_matches: DefaultDict[int, List[Tuple[str, LibDescriptor, FunctionDiff]]] = defaultdict()
+        self._plain_matches: DefaultDict[int, List[Tuple[str, LibDescriptor, FunctionDiff]]] = defaultdict()
+
+        # TODO: remove
+        self._first_order_connections: List[int] = []
+        self._second_order_connections: List[int] = []
 
     def compute(self) -> None:
         """
@@ -32,12 +39,22 @@ class LibMatch(object):
 
         for libname, descriptor in self.fdb.items():
             self._compute_first_order_matches(libname, descriptor)
+        log_info(f"{len(self._first_order_connections)=}")
+
+        for libname, descriptor in self.fdb.items():
             self._compute_second_order_matches(lib_name=libname)
-            self._compute_third_order()
-            self._compute_fourth_order()
+        log_info(f"{(self._second_order_connections)=}")
+        log_info(f"{len(self._second_order_connections)=}")
+
+        self._compute_third_order()
+        log_info(f"{len(self._plain_matches)=}")
+        log_info(f"{len(self._candidate_matches)=}")
+        self._compute_fourth_order()
+        log_info(f"{len(self._candidate_matches)=}")
 
         # Post-processing and deduplication
         self._dedup()
+        log_info(f"{len(self._candidate_matches)=}")
 
         self._computed = True
 
@@ -45,8 +62,8 @@ class LibMatch(object):
         if not self._computed:
             self.compute()
 
-        candidates: DefaultDict[int, List[Tuple[str, LibDescriptor, FunctionDiff]]] = self._candidate_matches
-        plain_candidates: DefaultDict[int, List[Tuple[str, LibDescriptor, FunctionDiff]]] = self._plain_matches
+        candidates = self._candidate_matches
+        plain_candidates = self._plain_matches
 
         candidates = self._smoosh(candidates)
         plain_candidates = self._smoosh(plain_candidates)
@@ -192,14 +209,14 @@ class LibMatch(object):
                     sym_name = desc.uniformed_functions[obj_func_addr].name
                 final_matches[f_addr] = sym_name
         # TODO: undo comment
-        # if collisions > 0:
-        #     log_warn(f"Detected {collisions} collisions")
-        # else:
-        #     log_info(f"Detected {collisions} collisions")
-        # if junk > 0:
-        #     log_warn(f"Ignored {junk} junk function matches")
-        # else:
-        #     log_info(f"Ignored {junk} junk function matches")
+        if collisions > 0:
+            log_warn(f"Detected {collisions} collisions")
+        else:
+            log_info(f"Detected {collisions} collisions")
+        if junk > 0:
+            log_warn(f"Ignored {junk} junk function matches")
+        else:
+            log_info(f"Ignored {junk} junk function matches")
 
         # log_info(f"Made {guesses} guesses")
         log_info(f"Matched {len(list(final_matches.keys()))} symbols")
@@ -236,7 +253,9 @@ class LibMatch(object):
             for bin_faddr, bin_attrs in self.binary_desc.function_attributes.items():
                 if attrs == bin_attrs:
                     possible_binary_func_matches.add(bin_faddr)
-            self._first_order_matches[lib_name][lib_descriptor][lib_func_addr] = possible_binary_func_matches
+            if len(possible_binary_func_matches) > 0:
+                self._first_order_matches[lib_name][lib_descriptor][lib_func_addr] = possible_binary_func_matches
+                self._first_order_connections.append(len(possible_binary_func_matches))
 
     def _second_order_heuristic(
         self, binary_desc: LibDescriptor, lib_desc: LibDescriptor, binary_faddr: int, lib_faddr: int
@@ -261,10 +280,12 @@ class LibMatch(object):
                 self._second_order_matches[lib_name][lib_desc][lib_faddr] = []
                 for maddr in func_matches:
                     if maddr not in self.binary_desc.uniformed_functions:
+                        print("came here")
                         continue
                     fdiff = self._second_order_heuristic(self.binary_desc, lib_desc, maddr, lib_faddr)
                     if fdiff.probably_identical:
                         self._second_order_matches[lib_name][lib_desc][lib_faddr].append((maddr, fdiff))
+                        self._second_order_connections.append(maddr)
 
     def _postprocess_second_order_matches(self) -> DefaultDict[int, List[Tuple[str, LibDescriptor, FunctionDiff]]]:
         # Gather the matches based on the functions in the original binary:
@@ -276,6 +297,7 @@ class LibMatch(object):
                     if obj_func_matches:
                         for target_addr, match_info in obj_func_matches:
                             if len(matches[target_addr]) > 0:
+                                pass
                                 # TODO
                                 # A collision! But is it a real one?
                                 # Did we match better?
@@ -299,7 +321,6 @@ class LibMatch(object):
                 self._narrow_third_order(f_addr, matches)
 
     def _compute_fourth_order(self) -> None:
-        self.recursion_list = []
         good_hits = []
         for f_addr, matches in self._candidate_matches.items():
             if len(matches) == 1:
@@ -312,7 +333,7 @@ class LibMatch(object):
         for f_addr, matches in good_hits:
             self._narrow_fourth_order(f_addr, matches)
 
-    def squish(self, func):
+    def squish(self, func) -> None:
         """
         When resolving collisions, are all the collisions duplicates? If so, we probably don't care, and will handle it in post later
         (but we save the dupes for stats purposes)
@@ -339,11 +360,9 @@ class LibMatch(object):
                 return
         self._candidate_matches[func] = [matches[0]]
 
-    recursion_list = []
-
     def _narrow_third_order(
         self, f_addr: int, matches: List[Tuple[str, LibDescriptor, FunctionDiff]], exact_narrowing=False
-    ):
+    ) -> None:
         """
         Refine candidate matches for a function based on its call graph context.
 
@@ -368,7 +387,7 @@ class LibMatch(object):
             self.recursion_list.remove(f_addr)
             return
 
-        log_info(f"Analyzing function {f_addr:x}")
+        log_debug(f"Analyzing function {f_addr:x}")
 
         # Get the target function object from the first match's FunctionDiff (or string)
         first_match = matches[0]
@@ -456,7 +475,7 @@ class LibMatch(object):
                 narrowed_matches.append((lib_name, lib_desc, fdiff))
 
         if len(narrowed_matches) < len(matches):
-            log_info(f"Narrowed matches for function {f_addr:#08x} from {len(matches)} to {len(narrowed_matches)}")
+            log_debug(f"Narrowed matches for function {f_addr:#08x} from {len(matches)} to {len(narrowed_matches)}")
             self._candidate_matches[f_addr] = narrowed_matches
             # Recursively narrow callees
             for _, _, fdiff in narrowed_matches:
@@ -467,7 +486,7 @@ class LibMatch(object):
                         if callee_addr in self._candidate_matches:
                             self._narrow_third_order(callee_addr, self._candidate_matches[callee_addr])
         else:
-            log_info(f"No narrowing possible for function {f_addr:#08x}")
+            log_debug(f"No narrowing possible for function {f_addr:#08x}")
 
         self.recursion_list.remove(f_addr)
 
@@ -488,7 +507,7 @@ class LibMatch(object):
             # Nothing to refine if zero or one candidate
             return
 
-        log_info(f"Fourth order narrowing on function {f_addr:#08x} with {len(matches)} candidates")
+        log_debug(f"Fourth order narrowing on function {f_addr:#08x} with {len(matches)} candidates")
 
         # Extract the target function (Binary Ninja Function) from the first candidate
         first_match = matches[0]

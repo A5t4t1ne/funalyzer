@@ -31,7 +31,9 @@ from funalyzer.core.parser import LibDescriptor
 from funalyzer.llm.llm import llm_request, LLM_REQUEST_TYPE
 from funalyzer.libmatch.libmatch import LibMatch
 import asyncio
+import debugpy
 
+debugpy.listen(("0.0.0.0", 5678))
 last_view = None
 
 class FunalyzerSidebarWidget(SidebarWidget):
@@ -205,6 +207,8 @@ class FunalyzerSidebarWidget(SidebarWidget):
         """Analyse the current binary view using LibMatch and LLM.
         This will use the selected options to either run LibMatch or LLM analysis in order to match functions.
         """
+        # debugpy.wait_for_client()
+        # debugpy.breakpoint()
         if not self.bv:
             log_error("No binary view present")
             return
@@ -220,13 +224,13 @@ class FunalyzerSidebarWidget(SidebarWidget):
                 binary_descriptor = LibDescriptor(self.bv) 
                 lm = LibMatch(self.bv, binary_descriptor, fdb)
                 lm.compute()
-                matches = lm.match()
-                if matches:
+                self.matches = lm.match()
+                if self.matches:
                     # set possible names in tree widget
                     for i in range(self.tree.topLevelItemCount()):
                         item = self.tree.topLevelItem(i)
                         addr = int(item.text(1), 16)
-                        item.setText(2, matches.get(addr, ""))
+                        item.setText(2, self.matches.get(addr, ""))
 
                 else:
                     log_warn("No matches found")
